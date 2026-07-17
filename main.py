@@ -1,8 +1,10 @@
 import os
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
+API_KEY = os.getenv("TWELVE_DATA_API_KEY")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -16,6 +18,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={API_KEY}"
+
+        response = requests.get(url, timeout=10)
+        data = response.json()
+
+        if "price" in data:
+            price = data["price"]
+
+            await update.message.reply_text(
+                f"📊 LIVE GOLD PRICE\n\n"
+                f"💰 XAUUSD: {price}\n\n"
+                f"✅ Live data from Twelve Data"
+            )
+        else:
+            await update.message.reply_text(f"API Error:\n{data}")
+
+    except Exception as e:
+        await update.message.reply_text(f"Error:\n{e}")
     await update.message.reply_text(
         "📊 GOLD ANALYSIS\n\n"
         "Trend: ⏳ Checking...\n"
