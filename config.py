@@ -1,0 +1,8 @@
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY")
+
+SYMBOL = "XAU/USD"
+INTERVAL = "1min"
+OUTPUTSIZE = 200
