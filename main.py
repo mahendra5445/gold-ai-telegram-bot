@@ -11,42 +11,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Gold AI Bot Online!\n\n"
         "Commands:\n"
-        "/gold - Gold Analysis\n"
-        "/signal - Trading Signal\n"
-        "/trend - Market Trend"
-    )
-
-
-async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={API_KEY}"
-
         response = requests.get(url, timeout=10)
         data = response.json()
 
         if "price" in data:
-            price = data["price"]
+            price = float(data["price"])
+
+            if price > 4000:
+                trend = "📈 BULLISH"
+                signal = "🟢 BUY"
+                entry = f"{price:.2f}"
+                sl = f"{price - 8:.2f}"
+                tp1 = f"{price + 10:.2f}"
+                tp2 = f"{price + 20:.2f}"
+            else:
+                trend = "📉 BEARISH"
+                signal = "🔴 SELL"
+                entry = f"{price:.2f}"
+                sl = f"{price + 8:.2f}"
+                tp1 = f"{price - 10:.2f}"
+                tp2 = f"{price - 20:.2f}"
 
             await update.message.reply_text(
-                f"📊 LIVE GOLD PRICE\n\n"
-                f"💰 XAUUSD: {price}\n\n"
-                f"✅ Live data from Twelve Data"
+                f"📊 GOLD ANALYSIS\n\n"
+                f"💰 Price: {price:.2f}\n"
+                f"Trend: {trend}\n"
+                f"Signal: {signal}\n\n"
+                f"🎯 Entry: {entry}\n"
+                f"🛑 Stop Loss: {sl}\n"
+                f"🎯 TP1: {tp1}\n"
+                f"🎯 TP2: {tp2}"
             )
         else:
-            await update.message.reply_text(f"API Error:\n{data}")
+            await update.message.reply_text("❌ API Error")
 
     except Exception as e:
-        await update.message.reply_text(f"Error:\n{e}")
-    await update.message.reply_text(
-        "📊 GOLD ANALYSIS\n\n"
-        "Trend: ⏳ Checking...\n"
-        "Signal: ⏳ Waiting...\n"
-        "Entry: --\n"
-        "Stop Loss: --\n"
-        "TP1: --\n"
-        "TP2: --\n\n"
-        "⚠️ AI Live Analysis will be added soon."
+        await update.message.reply_text(f"❌ Error:\n{e}")   "/gold - Gold Analysis\n"
+        "/signal - Trading Signal\n"
+        "/trend - Market Trend"
     )
+
 
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
