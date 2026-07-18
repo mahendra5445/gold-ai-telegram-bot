@@ -11,7 +11,7 @@ def get_signal(close_prices, high_prices, low_prices):
     macd_data = macd(close_prices)
     atr_value = atr(high_prices, low_prices, close_prices)
 
-    signal = "NO TRADE"reasons = []
+    signal = "NO TRADE"
     confidence = 50
     trend_strength = "Sideways"
 
@@ -22,9 +22,7 @@ def get_signal(close_prices, high_prices, low_prices):
     ):
         signal = "BUY"
         confidence = 90 if rsi_value > 60 else 80
-        trend_strength = "Strong Bullish"reasons.append("EMA Bullish")
-reasons.append("RSI Strong")
-reasons.append("MACD Bullish")
+        trend_strength = "Strong Bullish"
 
     elif (
         ema20 < ema50 < ema200
@@ -33,9 +31,7 @@ reasons.append("MACD Bullish")
     ):
         signal = "SELL"
         confidence = 90 if rsi_value < 40 else 80
-        trend_strength = "Strong Bearish"reasons.append("EMA Bearish")
-reasons.append("RSI Weak")
-reasons.append("MACD Bearish")
+        trend_strength = "Strong Bearish"
 
     price = round(close_prices[-1], 2)
 
@@ -59,16 +55,5 @@ reasons.append("MACD Bearish")
         "tp2": trade["tp2"],
         "risk_reward": trade["risk_reward"],
         "confidence": confidence,
-        "trend_strength": trend_streng"ai_score": confidence,"reason": reasons,
-
-"grade": (
-    "A+" if confidence >= 90 else
-    "A" if confidence >= 80 else
-    "B" if confidence >= 70 else
-    "C" if confidence >= 60 else
-    "D"
-),th,message += "\n\n💡 Reason\n"
-
-for r in result["reason"]:
-    message += f"\n✅ {r}"
+        "trend_strength": trend_strength,
     }
