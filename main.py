@@ -9,7 +9,7 @@ from formatter import format_signal
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 GOLD AI SCALPER PRO\n\n"
+        "🤖 GOLD AI SCALPER PRO v2.0.1\n\n"
         "✅ Bot Online\n\n"
         "Commands:\n"
         "/gold - Gold Analysis\n"
@@ -31,7 +31,8 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = get_signal(
         candles["close"],
         candles["high"],
-        candles["low"]
+        candles["low"],
+        candles["timeframes"]
     )
 
     message = format_signal(candles, result)
@@ -55,13 +56,17 @@ async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = get_signal(
         candles["close"],
         candles["high"],
-        candles["low"]
+        candles["low"],
+        candles["timeframes"]
     )
 
     await update.message.reply_text(
-        f"📈 Trend : {result['trend_strength']}\n"
-        f"📊 Signal : {result['signal']}\n"
-        f"📈 Confidence : {result['confidence']}%"
+        f"📊 1M Trend : {result['trend_1m']}\n"
+        f"📊 5M Trend : {result['trend_5m']}\n"
+        f"📊 15M Trend : {result['trend_15m']}\n\n"
+        f"📈 Overall Trend : {result['trend_strength']}\n"
+        f"📢 Signal : {result['signal']}\n"
+        f"🔥 Confidence : {result['confidence']}%"
     )
 
 
@@ -73,7 +78,7 @@ def main():
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("trend", trend))
 
-    print("🚀 Gold AI Scalper Pro Started...")
+    print("🚀 Gold AI Scalper Pro v2.0.1 Started...")
 
     app.run_polling()
 
