@@ -15,6 +15,7 @@ async def auto_signal_job(application):
             candles = get_candles()
 
             if candles is None:
+                print("[AUTO] Market data unavailable.")
                 await asyncio.sleep(300)
                 continue
 
@@ -22,33 +23,39 @@ async def auto_signal_job(application):
                 candles["close"],
                 candles["high"],
                 candles["low"],
-                candles["timeframes"]
+                candles["timeframes"],
             )
 
-            # NO TRADE पर कोई मैसेज नहीं
+            # NO TRADE होने पर कोई मैसेज नहीं भेजना
             if result["signal"] == "NO TRADE":
+                print("[AUTO] No Trade")
                 await asyncio.sleep(300)
                 continue
 
             message = format_signal(candles, result)
 
-            # Duplicate Signal Protection
+            # Duplicate Signal रोकना
             if message != _last_signal:
 
                 admins = application.bot_data.get("admins", [])
 
-                for chat_id in admins:
-                    try:
-                        await application.bot.send_message(
-                            chat_id=chat_id,
-                            text=message
-                        )
-                    except Exception as e:
-                        print(f"[SEND ERROR] {e}")
+                if not admins:
+                    print("[AUTO] No users registered. Send /start first.")
+                else:
+                    for chat_id in admins:
+                        try:
+                            await application.bot.send_message(
+                                chat_id=chat_id,
+                                text=message,
+                            )
+                        except Exception as e:
+                            print(f"[SEND ERROR] {e}")
 
-                _last_signal = message
+                    _last_signal = message
+                    print("[AUTO] Signal Sent")
 
         except Exception as e:
-            print(f"[AUTO SIGNAL ERROR] {e}")
+            print(f"[AUTO ERROR] {e}")
 
+        # हर 5 मिनट बाद नया Signal Check करेगा
         await asyncio.sleep(300)
