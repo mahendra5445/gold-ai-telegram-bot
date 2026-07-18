@@ -3,6 +3,7 @@ import asyncio
 from data import get_candles
 from strategy import get_signal
 from formatter import format_signal
+from news import is_high_impact_news
 
 _last_signal = None
 
@@ -16,6 +17,14 @@ async def auto_signal_job(application):
 
             if candles is None:
                 print("[AUTO] Market data unavailable.")
+                await asyncio.sleep(300)
+                continue
+
+            # ==========================
+            # HIGH IMPACT NEWS FILTER
+            # ==========================
+            if is_high_impact_news():
+                print("[NEWS FILTER] High Impact USD News - Signal Blocked")
                 await asyncio.sleep(300)
                 continue
 
