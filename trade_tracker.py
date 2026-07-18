@@ -13,7 +13,7 @@ stats = {
 def save_trade(result):
     signal = result.get("signal")
 
-    if signal not in ("BUY", "SELL"):
+    if signal not in ["BUY", "SELL"]:
         return
 
     trade = {
@@ -40,12 +40,12 @@ def get_open_trades():
 
 
 def update_trade(trade_id, status):
+
     for trade in trades:
 
         if trade["id"] != trade_id:
             continue
 
-        # दोबारा update नहीं होगा
         if trade["status"] != "OPEN":
             return False
 
@@ -62,12 +62,19 @@ def update_trade(trade_id, status):
     return False
 
 
+def find_trade(trade_id):
+    for trade in trades:
+        if trade["id"] == trade_id:
+            return trade
+    return None
+
+
 def get_stats():
+
     total = stats["buy"] + stats["sell"]
+    closed = stats["tp"] + stats["sl"]
 
     win_rate = 0
-
-    closed = stats["tp"] + stats["sl"]
 
     if closed > 0:
         win_rate = round((stats["tp"] / closed) * 100, 2)
