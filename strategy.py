@@ -5,12 +5,12 @@ from trend import get_trend
 
 def get_signal(close_prices, high_prices, low_prices, timeframes):
 
-    # Multi-Timeframe Trend
+    # ===== Multi-Timeframe Trend =====
     trend_1m = get_trend(timeframes["1m"])
     trend_5m = get_trend(timeframes["5m"])
     trend_15m = get_trend(timeframes["15m"])
 
-    # Indicators (5 Minute)
+    # ===== Indicators =====
     ema20 = round(ema(close_prices, 20), 2)
     ema50 = round(ema(close_prices, 50), 2)
     ema200 = round(ema(close_prices, 200), 2)
@@ -34,30 +34,63 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     confidence = 50
     trend_strength = "Sideways"
 
+    ai_score = 0
+    grade = "C"
+    market_status = "Sideways"
+
+    reasons = []
+
     buy_count = 0
     sell_count = 0
 
-    trends = [
-        trend_1m,
-        trend_5m,
-        trend_15m
-    ]
+    for trend in [trend_1m, trend_5m, trend_15m]:
 
-    for trend in trends:
         if trend == "Bullish":
             buy_count += 1
+
         elif trend == "Bearish":
             sell_count += 1
 
-    # ==========================
-    # ADX Filter
-    # ==========================
-    if adx_value < 20:
-        signal = "NO TRADE"
-        confidence = 50
-        trend_strength = "Weak Trend"
+    # ===== AI Score =====
 
-    elif (
+    if buy_count == 3 or sell_count == 3:
+        ai_score += 25
+        reasons.append("MTF Confirmed")
+
+    if ema20 > ema50 > ema200 or ema20 < ema50 < ema200:
+        ai_score += 20
+        reasons.append("EMA Alignment")
+
+    if macd_data["trend"] in ["Bullish", "Bearish"]:
+        ai_score += 15
+        reasons.append("MACD Confirmed")
+
+    if adx_value >= 25:
+        ai_score += 15
+        reasons.append("Strong ADX")
+
+    if atr_value > 0:
+        ai_score += 10
+        reasons.append("Healthy Volatility")
+
+    if rsi_value >= 55 or rsi_value <= 45:
+        ai_score += 15
+        reasons.append("RSI Confirmed")
+
+    # ===== Market Status =====
+
+    if adx_value >= 30:
+        market_status = "Trending"
+
+    elif adx_value >= 20:
+        market_status = "Moderate"
+
+    else:
+        market_status = "Sideways"
+
+    # ===== BUY Logic =====
+
+    if (
         buy_count == 3
         and ema20 > ema50 > ema200
         and rsi_value >= 55
@@ -72,7 +105,6 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     elif (
         buy_count >= 2
         and ema20 > ema50
-        and rsi_value >= 52
         and macd_data["trend"] == "Bullish"
         and adx_value >= 20
     ):
@@ -80,6 +112,8 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
         signal = "BUY"
         confidence = 85
         trend_strength = "Bullish"
+
+    # ===== SELL Logic =====
 
     elif (
         sell_count == 3
@@ -96,7 +130,6 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     elif (
         sell_count >= 2
         and ema20 < ema50
-        and rsi_value <= 48
         and macd_data["trend"] == "Bearish"
         and adx_value >= 20
     ):
@@ -110,6 +143,22 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
         signal = "NO TRADE"
         confidence = 50
         trend_strength = "Sideways"
+
+    # ===== Grade =====
+
+    if ai_score >= 90:
+        grade = "A+"
+
+    elif ai_score >= 80:
+        grade = "A"
+
+    elif ai_score >= 70:
+        grade = "B"
+
+    else:
+        grade = "C"
+
+    # ===== Trade Calculation =====
 
     trade = calculate_trade(
         signal=signal,
@@ -143,4 +192,9 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
 
         "confidence": confidence,
         "trend_strength": trend_strength,
+
+        "ai_score": ai_score,
+        "grade": grade,
+        "market_status": market_status,
+        "reasons": reasons,
     }
