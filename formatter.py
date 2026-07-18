@@ -1,6 +1,8 @@
 def format_signal(candles, result):
+    reasons = "\n".join([f"✅ {reason}" for reason in result["reasons"]])
+
     return f"""
-🤖 GOLD AI SCALPER PRO v2.0.2
+🤖 GOLD AI SCALPER PRO v2.0.3
 
 💰 Price : {candles['price']}
 
@@ -25,6 +27,14 @@ def format_signal(candles, result):
 
 ━━━━━━━━━━━━━━━━━━
 
+🏆 Grade : {result['grade']}
+
+🤖 AI Score : {result['ai_score']}/100
+
+📈 Market : {result['market_status']}
+
+━━━━━━━━━━━━━━━━━━
+
 📢 Signal : {result['signal']}
 
 🎯 Entry : {result['entry']}
@@ -32,6 +42,12 @@ def format_signal(candles, result):
 
 ✅ TP1 : {result['tp1']}
 ✅ TP2 : {result['tp2']}
+
+━━━━━━━━━━━━━━━━━━
+
+📋 Reasons
+
+{reasons}
 
 ━━━━━━━━━━━━━━━━━━
 
