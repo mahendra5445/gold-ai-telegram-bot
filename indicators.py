@@ -62,3 +62,54 @@ def atr(high, low, close, period=14):
     atr = true_range.rolling(period).mean()
 
     return round(atr.iloc[-1], 2)
+
+
+def adx(high, low, close, period=14):
+    high = pd.Series(high)
+    low = pd.Series(low)
+    close = pd.Series(close)
+
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+
+    plus_dm = plus_dm.where(
+        (plus_dm > minus_dm) & (plus_dm > 0),
+        0
+    )
+
+    minus_dm = minus_dm.where(
+        (minus_dm > plus_dm) & (minus_dm > 0),
+        0
+    )
+
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+
+    tr = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
+
+    atr_value = tr.rolling(period).mean()
+
+    plus_di = (
+        100
+        * plus_dm.rolling(period).mean()
+        / atr_value
+    )
+
+    minus_di = (
+        100
+        * minus_dm.rolling(period).mean()
+        / atr_value
+    )
+
+    dx = (
+        (plus_di - minus_di).abs()
+        / (plus_di + minus_di)
+    ) * 100
+
+    adx_value = dx.rolling(period).mean()
+
+    return round(adx_value.iloc[-1], 2)
