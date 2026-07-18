@@ -4,6 +4,7 @@ from data import get_candles
 from strategy import get_signal
 from formatter import format_signal
 from news import is_high_impact_news
+from trade_tracker import save_trade
 
 _last_signal = None
 
@@ -40,6 +41,9 @@ async def auto_signal_job(application):
                 print("[AUTO] No Trade")
                 await asyncio.sleep(300)
                 continue
+
+            # Trade Save
+            save_trade(result)
 
             message = format_signal(candles, result)
 
