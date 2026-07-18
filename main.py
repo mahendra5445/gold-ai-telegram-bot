@@ -8,6 +8,7 @@ from data import get_candles
 from strategy import get_signal
 from formatter import format_signal
 from auto_signal import auto_signal_job
+from trade_tracker import get_stats
 
 
 async def post_init(application):
@@ -22,13 +23,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admins.append(chat_id)
 
     await update.message.reply_text(
-        "🤖 GOLD AI SCALPER PRO v2.0.1\n\n"
+        "🤖 GOLD AI SCALPER PRO v2.1\n\n"
         "✅ Bot Online\n\n"
         "📡 Auto Signal Enabled\n\n"
         "Commands:\n"
         "/gold - Gold Analysis\n"
         "/signal - Trading Signal\n"
         "/trend - Trend Analysis\n"
+        "/stats - Trade Statistics\n"
         "/start - Start Bot"
     )
 
@@ -84,6 +86,19 @@ async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s = get_stats()
+
+    await update.message.reply_text(
+        f"📊 TRADE STATISTICS\n\n"
+        f"📈 Total Signals : {s['total']}\n"
+        f"🟢 BUY Signals : {s['buy']}\n"
+        f"🔴 SELL Signals : {s['sell']}\n"
+        f"🎯 TP Hit : {s['tp']}\n"
+        f"🛑 SL Hit : {s['sl']}"
+    )
+
+
 def main():
     app = (
         Application.builder()
@@ -96,8 +111,9 @@ def main():
     app.add_handler(CommandHandler("gold", gold))
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("trend", trend))
+    app.add_handler(CommandHandler("stats", stats))
 
-    print("🚀 Gold AI Scalper Pro v2.0.1 Started...")
+    print("🚀 Gold AI Scalper Pro v2.1 Started...")
 
     app.run_polling()
 
