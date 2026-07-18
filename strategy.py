@@ -55,5 +55,13 @@ def get_signal(close_prices, high_prices, low_prices):
         "tp2": trade["tp2"],
         "risk_reward": trade["risk_reward"],
         "confidence": confidence,
-        "trend_strength": trend_strength,
+        "trend_strength": trend_streng"ai_score": confidence,
+
+"grade": (
+    "A+" if confidence >= 90 else
+    "A" if confidence >= 80 else
+    "B" if confidence >= 70 else
+    "C" if confidence >= 60 else
+    "D"
+),th,
     }
