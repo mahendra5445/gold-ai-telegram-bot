@@ -1,8 +1,14 @@
 def format_signal(candles, result):
     reasons = "\n".join([f"✅ {reason}" for reason in result["reasons"]])
 
+    signal_emoji = {
+        "BUY": "🟢",
+        "SELL": "🔴",
+        "NO TRADE": "🟡"
+    }.get(result["signal"], "⚪")
+
     return f"""
-🤖 GOLD AI SCALPER PRO v2.0.3
+🤖 GOLD AI SCALPER PRO v2.1
 
 💰 Price : {candles['price']}
 
@@ -18,8 +24,6 @@ def format_signal(candles, result):
 📈 EMA50 : {result['ema50']}
 📈 EMA200 : {result['ema200']}
 
-━━━━━━━━━━━━━━━━━━
-
 📊 RSI : {result['rsi']}
 📊 MACD : {result['macd']['trend']}
 📊 ATR : {result['atr']}
@@ -28,20 +32,23 @@ def format_signal(candles, result):
 ━━━━━━━━━━━━━━━━━━
 
 🏆 Grade : {result['grade']}
-
 🤖 AI Score : {result['ai_score']}/100
-
+⭐ Signal Quality : {result['signal_quality']}
 📈 Market : {result['market_status']}
 
 ━━━━━━━━━━━━━━━━━━
 
-📢 Signal : {result['signal']}
+{signal_emoji} Signal : {result['signal']}
 
 🎯 Entry : {result['entry']}
 🛑 Stop Loss : {result['sl']}
-
 ✅ TP1 : {result['tp1']}
 ✅ TP2 : {result['tp2']}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 Buy Confirmations : {result['buy_confirmations']}
+📉 Sell Confirmations : {result['sell_confirmations']}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -52,8 +59,6 @@ def format_signal(candles, result):
 ━━━━━━━━━━━━━━━━━━
 
 📈 Overall Trend : {result['trend_strength']}
-
 🔥 Confidence : {result['confidence']}%
-
 ⚖️ Risk Reward : {result['risk_reward']}
 """
