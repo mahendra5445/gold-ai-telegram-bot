@@ -1,6 +1,6 @@
 def format_signal(candles, result):
     return f"""
-🤖 GOLD AI SCALPER PRO v2.0.1
+🤖 GOLD AI SCALPER PRO v2.0.2
 
 💰 Price : {candles['price']}
 
@@ -20,6 +20,8 @@ def format_signal(candles, result):
 
 📊 RSI : {result['rsi']}
 📊 MACD : {result['macd']['trend']}
+📊 ATR : {result['atr']}
+📊 ADX : {result['adx']}
 
 ━━━━━━━━━━━━━━━━━━
 
