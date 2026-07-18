@@ -1,4 +1,4 @@
-from indicators import ema, rsi, macd, atr
+from indicators import ema, rsi, macd, atr, adx
 from risk import calculate_trade
 from trend import get_trend
 
@@ -10,7 +10,7 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     trend_5m = get_trend(timeframes["5m"])
     trend_15m = get_trend(timeframes["15m"])
 
-    # Indicators (5 Minute Chart)
+    # Indicators (5 Minute)
     ema20 = round(ema(close_prices, 20), 2)
     ema50 = round(ema(close_prices, 50), 2)
     ema200 = round(ema(close_prices, 200), 2)
@@ -20,6 +20,11 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
 
     atr_value = round(
         atr(high_prices, low_prices, close_prices),
+        2
+    )
+
+    adx_value = round(
+        adx(high_prices, low_prices, close_prices),
         2
     )
 
@@ -45,61 +50,63 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
             sell_count += 1
 
     # ==========================
-    # Strong BUY
+    # ADX Filter
     # ==========================
-    if (
+    if adx_value < 20:
+        signal = "NO TRADE"
+        confidence = 50
+        trend_strength = "Weak Trend"
+
+    elif (
         buy_count == 3
         and ema20 > ema50 > ema200
         and rsi_value >= 55
         and macd_data["trend"] == "Bullish"
+        and adx_value >= 25
     ):
+
         signal = "BUY"
         confidence = 95
         trend_strength = "Strong Bullish"
 
-    # ==========================
-    # Medium BUY
-    # ==========================
     elif (
-        buy_count == 2
+        buy_count >= 2
         and ema20 > ema50
         and rsi_value >= 52
         and macd_data["trend"] == "Bullish"
+        and adx_value >= 20
     ):
+
         signal = "BUY"
         confidence = 85
         trend_strength = "Bullish"
 
-    # ==========================
-    # Strong SELL
-    # ==========================
     elif (
         sell_count == 3
         and ema20 < ema50 < ema200
         and rsi_value <= 45
         and macd_data["trend"] == "Bearish"
+        and adx_value >= 25
     ):
+
         signal = "SELL"
         confidence = 95
         trend_strength = "Strong Bearish"
 
-    # ==========================
-    # Medium SELL
-    # ==========================
     elif (
-        sell_count == 2
+        sell_count >= 2
         and ema20 < ema50
         and rsi_value <= 48
         and macd_data["trend"] == "Bearish"
+        and adx_value >= 20
     ):
+
         signal = "SELL"
         confidence = 85
         trend_strength = "Bearish"
 
-    # ==========================
-    # No Trade
-    # ==========================
     else:
+
         signal = "NO TRADE"
         confidence = 50
         trend_strength = "Sideways"
@@ -117,7 +124,9 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
 
         "rsi": rsi_value,
         "macd": macd_data,
+
         "atr": atr_value,
+        "adx": adx_value,
 
         "trend_1m": trend_1m,
         "trend_5m": trend_5m,
