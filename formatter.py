@@ -1,3 +1,7 @@
+def _check(ok):
+    return "✅" if ok else "❌"
+
+
 def format_signal(candles, result):
     reasons = "\n".join(f"✅ {r}" for r in result.get("reasons", []))
 
@@ -9,47 +13,51 @@ def format_signal(candles, result):
 
     price = round(float(candles["price"]), 2)
 
-    return f"""🤖 GOLD AI SCALPER PRO v3.2
+    session_line = result.get("session", "-")
+    if not result.get("session_active", True):
+        session_line += " ⚠️"
+
+    return f"""🤖 GOLD AI SCALPER PRO v4.0
 
 💰 Price : {price:.2f}
 
 ━━━━━━━━━━━━━━━━━━
 
-⏱️ 1M Trend : {result['trend_1m']}
-⏱️ 5M Trend : {result['trend_5m']}
-⏱️ 15M Trend : {result['trend_15m']}
-
-━━━━━━━━━━━━━━━━━━
-
-📈 EMA20 : {result['ema20']}
-📈 EMA50 : {result['ema50']}
-📈 EMA200 : {result['ema200']}
-
-📊 RSI : {result['rsi']}
-📊 MACD : {result['macd']['trend']}
-📊 ATR : {result['atr']}
-📊 ADX : {result['adx']}
-
-━━━━━━━━━━━━━━━━━━
-
+🟢 AI Score : {result['ai_score']}/100
 🏆 Grade : {result['grade']}
-🤖 AI Score : {result['ai_score']}/100
-⭐ Signal Quality : {result['signal_quality']}
+⭐ Confidence : {result['confidence']}%
 📈 Market : {result['market_status']}
+🕘 Session : {session_line}
 
 ━━━━━━━━━━━━━━━━━━
 
-{signal_emoji} Signal : {result['signal']}
+🕒 1M : {result['trend_1m']}
+🕒 5M : {result['trend_5m']}
+🕒 15M : {result['trend_15m']}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 EMA : {_check(result.get('ema_ok'))}
+📊 MACD : {result['macd']['trend']}
+📊 RSI : {result['rsi']}
+📊 ADX : {_check(result.get('adx_ok'))}
+📊 VWAP : {_check(result.get('vwap_ok'))}
+📊 Supertrend : {_check(result.get('supertrend_ok'))}
+📊 Volume : {_check(result.get('volume_ok'))}
+📊 Pattern : {result.get('pattern', 'None')}
+📊 Liquidity Sweep : {result.get('liquidity_sweep', 'NO')}
+
+━━━━━━━━━━━━━━━━━━
+
+{signal_emoji} SIGNAL : {result['signal']}
 
 🎯 Entry : {result['entry']}
-🛑 Stop Loss : {result['sl']}
+🛑 SL : {result['sl']}
 ✅ TP1 : {result['tp1']}
 ✅ TP2 : {result['tp2']}
+✅ TP3 : {result['tp3']}
 
-━━━━━━━━━━━━━━━━━━
-
-📊 Buy Confirmations : {result['buy_confirmations']}
-📉 Sell Confirmations : {result['sell_confirmations']}
+⚖️ RR : {result['risk_reward']}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -59,7 +67,8 @@ def format_signal(candles, result):
 
 ━━━━━━━━━━━━━━━━━━
 
-📈 Overall Trend : {result['trend_strength']}
-🔥 Confidence : {result['confidence']}%
-⚖️ Risk Reward : {result['risk_reward']}
+📊 Buy Confirmations : {result['buy_confirmations']}
+📉 Sell Confirmations : {result['sell_confirmations']}
+
+⏰ Valid : {result.get('valid_minutes', 8)} Minutes
 """
