@@ -1,168 +1,137 @@
-import pandas as pd
+from indicators import (
+    ema,
+    rsi,
+    macd,
+    atr,
+    adx,
+    vwap,
+    bollinger_bands,
+    supertrend,
+    trend_strength,
+)
+from risk import calculate_trade
+from trend import get_trend
 
 
-def ema(values, period):
-    return round(
-        pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1], 2
-    )
+def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
+    trend_1m = get_trend(timeframes["1m"])
+    trend_5m = get_trend(timeframes["5m"])
+    trend_15m = get_trend(timeframes["15m"])
 
+    ema20 = round(ema(close_prices, 20), 2)
+    ema50 = round(ema(close_prices, 50), 2)
+    ema200 = round(ema(close_prices, 200), 2)
 
-def rsi(values, period=14):
-    close = pd.Series(values)
+    rsi_value = round(rsi(close_prices), 2)
+    macd_data = macd(close_prices)
+    atr_value = round(atr(high_prices, low_prices, close_prices), 2)
+    adx_value = round(adx(high_prices, low_prices, close_prices), 2)
 
-    delta = close.diff()
+    st = supertrend(high_prices, low_prices, close_prices)
+    bb = bollinger_bands(close_prices)
 
-    gain = delta.where(delta > 0, 0).rolling(period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    if volume:
+        vwap_value = vwap(high_prices, low_prices, close_prices, volume)
+    else:
+        vwap_value = round(close_prices[-1], 2)
 
-    rs = gain / loss
+    price = round(close_prices[-1], 2)
 
-    rsi = 100 - (100 / (1 + rs))
+    buy_count = sum(t == "Bullish" for t in [trend_1m, trend_5m, trend_15m])
+    sell_count = sum(t == "Bearish" for t in [trend_1m, trend_5m, trend_15m])
 
-    return round(rsi.iloc[-1], 2)
+    ai_score = 0
+    reasons = []
 
+    if buy_count == 3 or sell_count == 3:
+        ai_score += 25
+        reasons.append("MTF Confirmed")
 
-def macd(values):
-    close = pd.Series(values)
+    if ema20 > ema50 > ema200 or ema20 < ema50 < ema200:
+        ai_score += 20
+        reasons.append("EMA Alignment")
 
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-
-    macd_line = ema12 - ema26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-
-    trend = "Bullish"
-
-    if macd_line.iloc[-1] < signal_line.iloc[-1]:
-        trend = "Bearish"
-
-    return {
-        "macd": round(macd_line.iloc[-1], 2),
-        "signal": round(signal_line.iloc[-1], 2),
-        "trend": trend,
-    }
-
-
-def atr(high, low, close, period=14):
-    high = pd.Series(high)
-    low = pd.Series(low)
-    close = pd.Series(close)
-
-    previous_close = close.shift(1)
-
-    tr1 = high - low
-    tr2 = (high - previous_close).abs()
-    tr3 = (low - previous_close).abs()
-
-    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr_value = true_range.rolling(period).mean()
-
-    return round(atr_value.iloc[-1], 2)
-
-
-def adx(high, low, close, period=14):
-    high = pd.Series(high)
-    low = pd.Series(low)
-    close = pd.Series(close)
-
-    plus_dm = high.diff()
-    minus_dm = -low.diff()
-
-    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
-    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
-
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr_value = tr.rolling(period).mean()
-
-    plus_di = 100 * plus_dm.rolling(period).mean() / atr_value
-    minus_di = 100 * minus_dm.rolling(period).mean() / atr_value
-
-    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100
-
-    adx_value = dx.rolling(period).mean()
-
-    return round(adx_value.iloc[-1], 2)
-
-
-def vwap(high, low, close, volume):
-    high = pd.Series(high)
-    low = pd.Series(low)
-    close = pd.Series(close)
-    volume = pd.Series(volume)
-
-    typical_price = (high + low + close) / 3
-    value = (typical_price * volume).cumsum() / volume.cumsum()
-
-    return round(value.iloc[-1], 2)
-
-
-def bollinger_bands(values, period=20, std_dev=2):
-    close = pd.Series(values)
-
-    sma = close.rolling(period).mean()
-    std = close.rolling(period).std()
-
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-
-    return {
-        "upper": round(upper.iloc[-1], 2),
-        "middle": round(sma.iloc[-1], 2),
-        "lower": round(lower.iloc[-1], 2),
-    }
-
-
-def trend_strength(adx_value):
-    if adx_value >= 40:
-        return "Very Strong"
     if adx_value >= 25:
-        return "Strong"
-    if adx_value >= 20:
-        return "Moderate"
-    return "Weak"
+        ai_score += 15
+        reasons.append("Strong ADX")
 
+    ai_score += 15
+    reasons.append("MACD Confirmed")
 
-def supertrend(high, low, close, period=10, multiplier=3):
-    high = pd.Series(high).reset_index(drop=True)
-    low = pd.Series(low).reset_index(drop=True)
-    close = pd.Series(close).reset_index(drop=True)
+    if st["trend"] == macd_data["trend"]:
+        ai_score += 10
+        reasons.append("Supertrend Confirmed")
 
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
+    if price > vwap_value:
+        ai_score += 5
+        reasons.append("Above VWAP")
+    elif price < vwap_value:
+        ai_score += 5
+        reasons.append("Below VWAP")
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
+    if bb["lower"] < price < bb["upper"]:
+        ai_score += 5
+        reasons.append("Inside Bollinger")
 
-    hl2 = (high + low) / 2
+    if rsi_value >= 55 or rsi_value <= 45:
+        ai_score += 5
+        reasons.append("RSI Confirmed")
 
-    upperband = hl2 + (multiplier * atr)
-    lowerband = hl2 - (multiplier * atr)
+    signal = "NO TRADE"
+    trend_text = "Sideways"
 
-    final_upper = upperband.copy()
-    final_lower = lowerband.copy()
+    if buy_count >= 2 and st["trend"] == "Bullish" and ema20 > ema50 and macd_data["trend"] == "Bullish":
+        signal = "BUY"
+        trend_text = "Bullish"
 
-    trend = [True] * len(close)
+    if sell_count >= 2 and st["trend"] == "Bearish" and ema20 < ema50 and macd_data["trend"] == "Bearish":
+        signal = "SELL"
+        trend_text = "Bearish"
 
-    for i in range(1, len(close)):
-        if close.iloc[i] > final_upper.iloc[i - 1]:
-            trend[i] = True
-        elif close.iloc[i] < final_lower.iloc[i - 1]:
-            trend[i] = False
-        else:
-            trend[i] = trend[i - 1]
-            if trend[i] and final_lower.iloc[i] < final_lower.iloc[i - 1]:
-                final_lower.iloc[i] = final_lower.iloc[i - 1]
-            if (not trend[i]) and final_upper.iloc[i] > final_upper.iloc[i - 1]:
-                final_upper.iloc[i] = final_upper.iloc[i - 1]
+    confidence = min(ai_score, 99)
+
+    if ai_score >= 95:
+        grade = "A+"
+        quality = "⭐⭐⭐⭐⭐"
+    elif ai_score >= 85:
+        grade = "A"
+        quality = "⭐⭐⭐⭐"
+    elif ai_score >= 70:
+        grade = "B"
+        quality = "⭐⭐⭐"
+    else:
+        grade = "C"
+        quality = "⭐⭐"
+
+    trade = calculate_trade(signal=signal, price=price, atr=atr_value)
 
     return {
-        "trend": "Bullish" if trend[-1] else "Bearish",
-        "value": round(final_lower.iloc[-1] if trend[-1] else final_upper.iloc[-1], 2),
+        "signal": signal,
+        "entry": trade["entry"],
+        "sl": trade["sl"],
+        "tp1": trade["tp1"],
+        "tp2": trade["tp2"],
+        "risk_reward": trade["risk_reward"],
+        "ema20": ema20,
+        "ema50": ema50,
+        "ema200": ema200,
+        "rsi": rsi_value,
+        "macd": macd_data,
+        "atr": atr_value,
+        "adx": adx_value,
+        "vwap": vwap_value,
+        "bollinger": bb,
+        "supertrend": st,
+        "trend_strength": trend_strength(adx_value),
+        "trend_1m": trend_1m,
+        "trend_5m": trend_5m,
+        "trend_15m": trend_15m,
+        "confidence": confidence,
+        "ai_score": ai_score,
+        "grade": grade,
+        "signal_quality": quality,
+        "market_status": "Trending" if adx_value >= 25 else "Sideways",
+        "buy_confirmations": buy_count,
+        "sell_confirmations": sell_count,
+        "reasons": reasons,
     }
