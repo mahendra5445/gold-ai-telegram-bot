@@ -66,7 +66,10 @@ def get_signal(close, high, low, timeframes, volume=None):
     sell_score = 0
 
     buy_confirmations = 0
-    sell_confirmations = 0# ==========================
+    sell_confirmations = 0
+    reasons = []
+
+    # ==========================
     # BUY CONDITIONS
     # ==========================
 
@@ -148,7 +151,7 @@ def get_signal(close, high, low, timeframes, volume=None):
 
     # ==========================
     # FINAL SIGNAL
-if buy_score >= 60 and buy_score > sell_score:
+    if buy_score >= 60 and buy_score > sell_score:
         signal = "BUY"
         ai_score = buy_score
 
