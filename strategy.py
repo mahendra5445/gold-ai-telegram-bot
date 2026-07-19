@@ -148,9 +148,7 @@ def get_signal(close, high, low, timeframes, volume=None):
 
     # ==========================
     # FINAL SIGNAL
-    # ==========================
-
-    if buy_score >= 60 and buy_score > sell_score:
+if buy_score >= 60 and buy_score > sell_score:
         signal = "BUY"
         ai_score = buy_score
 
@@ -163,51 +161,40 @@ def get_signal(close, high, low, timeframes, volume=None):
         ai_score = max(buy_score, sell_score)
 
     confidence = min(ai_score, 100)
-
     grade = confidence_label(confidence)
-
     signal_quality = grade
 
-    trade = calculate_trade(signal, price, atr_value)return {
+    trade = calculate_trade(signal, price, atr_value)
+
+    return {
         "signal": signal,
         "confidence": confidence,
         "grade": grade,
         "ai_score": ai_score,
         "signal_quality": signal_quality,
-
         "price": price,
-
         "entry": trade["entry"],
         "sl": trade["sl"],
         "tp1": trade["tp1"],
         "tp2": trade["tp2"],
         "tp3": trade["tp3"],
         "risk_reward": trade["risk_reward"],
-
         "ema20": ema20,
         "ema50": ema50,
         "ema200": ema200,
-
         "rsi": rsi_value,
         "macd": macd_value,
         "atr": atr_value,
         "adx": adx_value,
-
         "vwap": vwap_value,
         "bollinger": bb,
         "supertrend": st,
-
         "trend_1m": trend1,
         "trend_5m": trend5,
         "trend_15m": trend15,
         "trend_strength": trend_power,
-
         "buy_confirmations": buy_confirmations,
         "sell_confirmations": sell_confirmations,
-
         "market_status": "TRENDING" if adx_value >= 25 else "RANGING",
-
         "reasons": reasons,
     }
-
-    reasons = []
