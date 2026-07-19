@@ -8,11 +8,13 @@ from data import get_candles
 from strategy import get_signal
 from formatter import format_signal
 from auto_signal import auto_signal_job
+from trade_monitor import trade_monitor_job
 from trade_tracker import get_stats, history_text
 
 
 async def post_init(application):
     asyncio.create_task(auto_signal_job(application))
+    asyncio.create_task(trade_monitor_job(application))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
