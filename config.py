@@ -3,10 +3,11 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY")
 
-# Gold
-GOLD_SYMBOL = "XAU/USD"
+# Temporary compatibility
+SYMBOL = "XAU/USD"
 
-# Crypto
+# New symbols
+GOLD_SYMBOL = "XAU/USD"
 BTC_SYMBOL = "BTCUSDT"
 
 INTERVAL = "1min"
