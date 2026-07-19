@@ -34,6 +34,8 @@ async def auto_signal_job(application):
                 candles["high"],
                 candles["low"],
                 candles["timeframes"],
+                candles.get("volume"),
+                candles.get("open"),
             )
 
             # NO TRADE होने पर कोई मैसेज नहीं भेजना
