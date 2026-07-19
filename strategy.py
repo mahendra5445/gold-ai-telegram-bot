@@ -27,8 +27,8 @@ W_RSI = 10
 W_VWAP = 10
 W_MTF = 15
 
-BASE_MIN_SCORE = 70          # normal minimum score to trigger a signal
-OFF_SESSION_MIN_SCORE = 85   # stricter minimum during low-liquidity sessions
+BASE_MIN_SCORE = 55          # normal minimum score to trigger a signal
+OFF_SESSION_MIN_SCORE = 70   # stricter minimum during low-liquidity sessions
 LOW_VOLUME_RATIO = 0.7       # current volume must be >= 70% of recent average
 SIGNAL_VALID_MINUTES = 8
 
