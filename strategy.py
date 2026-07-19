@@ -151,11 +151,27 @@ def get_signal(close, high, low, timeframes, volume=None):
 
     # ==========================
     # FINAL SIGNAL
-    if buy_score >= 60 and buy_score > sell_score:
+    # Sirf tab BUY/SELL denge jab score strong ho (>=70)
+    # AUR 5M + 15M trend dono ek hi direction confirm karein.
+    # Isse weak/fake signals reduce hote hain.
+    MIN_SIGNAL_SCORE = 70
+
+    buy_trend_confirmed = "Bullish" in trend5 and "Bullish" in trend15
+    sell_trend_confirmed = "Bearish" in trend5 and "Bearish" in trend15
+
+    if (
+        buy_score >= MIN_SIGNAL_SCORE
+        and buy_score > sell_score
+        and buy_trend_confirmed
+    ):
         signal = "BUY"
         ai_score = buy_score
 
-    elif sell_score >= 60 and sell_score > buy_score:
+    elif (
+        sell_score >= MIN_SIGNAL_SCORE
+        and sell_score > buy_score
+        and sell_trend_confirmed
+    ):
         signal = "SELL"
         ai_score = sell_score
 
