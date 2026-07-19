@@ -3,7 +3,7 @@ from risk import calculate_trade
 from trend import get_trend
 
 
-def get_signal(close_prices, high_prices, low_prices, timeframes):
+def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
 
     trend_1m = get_trend(timeframes["1m"])
     trend_5m = get_trend(timeframes["5m"])
@@ -41,7 +41,7 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     if ema20 > ema50 > ema200 or ema20 < ema50 < ema200:
         ai_score += 20
         reasons.append("EMA Alignment")
-    if macd_data["trend"] in ["Bullish", "Bearish"]:
+    if macd_data["trend"] in ["Bullish","Bearish"]:
         ai_score += 15
         reasons.append("MACD Confirmed")
     if adx_value >= 25:
@@ -59,42 +59,22 @@ def get_signal(close_prices, high_prices, low_prices, timeframes):
     elif adx_value >= 20:
         market_status = "Moderate"
 
-    if (
-        buy_count == 3 and ai_score >= 80 and
-        ema20 > ema50 > ema200 and
-        rsi_value >= 55 and
-        macd_data["trend"] == "Bullish" and
-        adx_value >= 25
-    ):
+    if buy_count == 3 and ai_score >= 80 and ema20 > ema50 > ema200 and rsi_value >= 55 and macd_data["trend"] == "Bullish" and adx_value >= 25:
         signal = "BUY"
         trend_strength = "Strong Bullish"
-    elif (
-        buy_count >= 2 and ema20 > ema50 and
-        macd_data["trend"] == "Bullish" and
-        adx_value >= 20
-    ):
+    elif buy_count >= 2 and ema20 > ema50 and macd_data["trend"] == "Bullish" and adx_value >= 20:
         signal = "BUY"
         trend_strength = "Bullish"
-    elif (
-        sell_count == 3 and ai_score >= 80 and
-        ema20 < ema50 < ema200 and
-        rsi_value <= 45 and
-        macd_data["trend"] == "Bearish" and
-        adx_value >= 25
-    ):
+    elif sell_count == 3 and ai_score >= 80 and ema20 < ema50 < ema200 and rsi_value <= 45 and macd_data["trend"] == "Bearish" and adx_value >= 25:
         signal = "SELL"
         trend_strength = "Strong Bearish"
-    elif (
-        sell_count >= 2 and ema20 < ema50 and
-        macd_data["trend"] == "Bearish" and
-        adx_value >= 20
-    ):
+    elif sell_count >= 2 and ema20 < ema50 and macd_data["trend"] == "Bearish" and adx_value >= 20:
         signal = "SELL"
         trend_strength = "Bearish"
 
-    confidence = min(ai_score, 99)
+    confidence = min(ai_score,99)
     if signal == "NO TRADE":
-        confidence = min(ai_score, 60)
+        confidence = min(ai_score,60)
 
     if ai_score >= 95:
         signal_quality = "⭐⭐⭐⭐⭐"
