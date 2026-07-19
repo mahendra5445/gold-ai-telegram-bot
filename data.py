@@ -68,6 +68,35 @@ def get_btc_tf(interval):
     }
 
 
+def get_latest_price(asset="gold"):
+    """
+    Lightweight price check (single latest candle) used by the trade
+    monitor, so we don't burn API quota pulling 200 candles just to
+    check if a target/SL was hit.
+    """
+    symbol = BTC_SYMBOL if asset.lower() == "btc" else GOLD_SYMBOL
+    params = {
+        "symbol": symbol,
+        "interval": "1min",
+        "outputsize": 1,
+        "apikey": TWELVE_DATA_API_KEY,
+    }
+
+    try:
+        r = requests.get(TD_URL, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        print(f"[PRICE ERROR] {asset}: {e}")
+        return None
+
+    if "values" not in data:
+        print(data)
+        return None
+
+    return float(data["values"][0]["close"])
+
+
 def get_candles(asset="gold"):
     if asset.lower() == "btc":
         tf1 = get_btc_tf("1min")
