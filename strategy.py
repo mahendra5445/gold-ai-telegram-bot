@@ -1,8 +1,15 @@
 from indicators import (
-    ema, rsi, macd, atr, adx,
-    vwap, bollinger_bands,
-    supertrend, trend_strength,
+    ema,
+    rsi,
+    macd,
+    atr,
+    adx,
+    vwap,
+    bollinger_bands,
+    supertrend,
+    trend_strength,
 )
+
 from risk import calculate_trade
 from trend import get_trend
 
@@ -13,9 +20,16 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
     trend_5m = get_trend(timeframes["5m"])
     trend_15m = get_trend(timeframes["15m"])
 
-    ema20 = ema(close_prices, 20)
-    ema50 = ema(close_prices, 50)
-    ema200 = ema(close_prices, 200)
+    try:
+        ema20 = ema(close_prices, 20)
+        ema50 = ema(close_prices, 50)
+        ema200 = ema(close_prices, 200)
+    except Exception:
+        return {
+            "signal": "NO TRADE",
+            "confidence": 0,
+            "reason": "EMA Error"
+        }
 
     rsi_value = rsi(close_prices)
     macd_data = macd(close_prices)
@@ -28,8 +42,13 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
 
     price = round(close_prices[-1], 2)
 
-    if volume:
-        vwap_value = vwap(high_prices, low_prices, close_prices, volume)
+    if volume is not None and len(volume) == len(close_prices):
+        vwap_value = vwap(
+            high_prices,
+            low_prices,
+            close_prices,
+            volume,
+        )
     else:
         vwap_value = price
 
@@ -38,33 +57,16 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
     score = 0
     reasons = []
 
-    # Multi Timeframe Trend
+    # ===== MULTI TIMEFRAME =====
 
-    if trend_1m.startswith("Strong") or trend_1m == "Bullish":
-        buy += 1
-        score += 5
+    for trend, weight in [
+        (trend_1m, 1),
+        (trend_5m, 2),
+        (trend_15m, 3),
+    ]:
 
-    if trend_5m.startswith("Strong") or trend_5m == "Bullish":
-        buy += 2
-        score += 10
-
-    if trend_15m.startswith("Strong") or trend_15m == "Bullish":
-        buy += 3
-        score += 15
-
-    if trend_1m.endswith("Bearish"):
-        sell += 1
-        score += 5
-
-    if trend_5m.endswith("Bearish"):
-        sell += 2
-        score += 10
-
-    if trend_15m.endswith("Bearish"):
-        sell += 3
-        score += 15
-
-    # EMA Alignment
+        if "Bullish" in trend:
+            buy += weight# ===== EMA ALIGNMENT =====
 
     if ema20 > ema50 > ema200:
         buy += 2
@@ -76,7 +78,7 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         score += 20
         reasons.append("EMA Bearish")
 
-    # ADX
+    # ===== ADX FILTER =====
 
     if adx_value >= 30:
         score += 20
@@ -86,7 +88,10 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         score += 10
         reasons.append("Trending")
 
-    # RSI
+    else:
+        reasons.append("Sideways Market")
+
+    # ===== RSI =====
 
     if 55 <= rsi_value <= 70:
         buy += 1
@@ -98,19 +103,21 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         score += 10
         reasons.append("RSI Bearish")
 
-    # MACD
+    # ===== MACD =====
 
-    if macd_data["trend"] == "Bullish":
+    macd_trend = macd_data.get("trend", "Neutral")
+
+    if macd_trend == "Bullish":
         buy += 1
         score += 10
         reasons.append("MACD Bullish")
 
-    elif macd_data["trend"] == "Bearish":
+    elif macd_trend == "Bearish":
         sell += 1
         score += 10
         reasons.append("MACD Bearish")
 
-    # Supertrend
+    # ===== SUPERTREND =====
 
     if st["trend"] == "Bullish":
         buy += 1
@@ -122,7 +129,7 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         score += 10
         reasons.append("Supertrend Bearish")
 
-    # VWAP
+    # ===== VWAP =====
 
     if price > vwap_value:
         buy += 1
@@ -134,27 +141,28 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         score += 10
         reasons.append("Below VWAP")
 
-    # Bollinger
+    # ===== BOLLINGER =====# ===== FINAL FILTER =====
 
-    if bb["lower"] < price < bb["upper"]:
-        score += 5
-        reasons.append("Inside Bollinger")
+    confidence = min(score, 99)
 
-    # Final Signal
+    # Sideways market filter
+    if adx_value < 20:
+        signal = "NO TRADE"
 
-    signal = "NO TRADE"
-
-    if buy >= 7 and score >= 75:
+    elif buy >= 8 and confidence >= 85:
         signal = "STRONG BUY"
 
-    elif buy >= 5 and score >= 60:
+    elif buy >= 6 and confidence >= 70:
         signal = "BUY"
 
-    elif sell >= 7 and score >= 75:
+    elif sell >= 8 and confidence >= 85:
         signal = "STRONG SELL"
 
-    elif sell >= 5 and score >= 60:
+    elif sell >= 6 and confidence >= 70:
         signal = "SELL"
+
+    else:
+        signal = "NO TRADE"
 
     trade = calculate_trade(
         "BUY" if "BUY" in signal else
@@ -164,24 +172,17 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         atr_value,
     )
 
-    confidence = min(score, 99)
-
     if confidence >= 90:
         grade = "A+"
-    elif confidence >= 80:
-        grade = "A"
-    elif confidence >= 70:
-        grade = "B"
-    else:
-        grade = "C"
-
-    if confidence >= 90:
         stars = "⭐⭐⭐⭐⭐"
     elif confidence >= 80:
+        grade = "A"
         stars = "⭐⭐⭐⭐"
     elif confidence >= 70:
+        grade = "B"
         stars = "⭐⭐⭐"
     else:
+        grade = "C"
         stars = "⭐⭐"
 
     return {
@@ -211,3 +212,12 @@ def get_signal(close_prices, high_prices, low_prices, timeframes, volume=None):
         "sell_confirmations": sell,
         "reasons": reasons,
     }
+
+    if bb["lower"] < price < bb["upper"]:
+        score += 5
+        reasons.append("Inside Bollinger")
+            score += weight * 5
+
+        if "Bearish" in trend:
+            sell += weight
+            score += weight * 5
