@@ -22,11 +22,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admins.append(chat_id)
 
     await update.message.reply_text(
-        "🤖 GOLD AI SCALPER PRO v2.2\n\n"
+        "🤖 GOLD AI SCALPER PRO v3.0\n\n"
         "✅ Bot Online\n"
-        "📡 Auto Signal Enabled\n\n"
+        "📡 AI Signal Engine Active\n\n"
         "Commands:\n"
         "/gold\n/signal\n/trend\n/stats\n/history"
+    )
+
+
+def build_result(candles):
+    return get_signal(
+        candles["close"],
+        candles["high"],
+        candles["low"],
+        candles["timeframes"],
+        candles.get("volume"),
     )
 
 
@@ -35,7 +45,8 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if candles is None:
         await update.message.reply_text("❌ Market data unavailable.")
         return
-    result = get_signal(candles["close"], candles["high"], candles["low"], candles["timeframes"])
+
+    result = build_result(candles)
     await update.message.reply_text(format_signal(candles, result))
 
 
@@ -48,14 +59,19 @@ async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if candles is None:
         await update.message.reply_text("❌ Market data unavailable.")
         return
-    result = get_signal(candles["close"], candles["high"], candles["low"], candles["timeframes"])
+
+    result = build_result(candles)
+
     await update.message.reply_text(
         f"📊 1M Trend : {result['trend_1m']}\n"
         f"📊 5M Trend : {result['trend_5m']}\n"
         f"📊 15M Trend : {result['trend_15m']}\n\n"
-        f"📈 Overall Trend : {result['trend_strength']}\n"
+        f"📈 Trend Strength : {result['trend_strength']}\n"
         f"📢 Signal : {result['signal']}\n"
-        f"🔥 Confidence : {result['confidence']}%"
+        f"🤖 AI Score : {result['ai_score']}\n"
+        f"🎖 Grade : {result['grade']}\n"
+        f"🔥 Confidence : {result['confidence']}%\n"
+        f"📍 Market : {result['market_status']}"
     )
 
 
@@ -77,13 +93,15 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("gold", gold))
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("trend", trend))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("history", history))
-    print("🚀 Gold AI Scalper Pro v2.2 Started...")
+
+    print("🚀 Gold AI Scalper Pro v3.0 Started...")
     app.run_polling()
 
 
