@@ -1,6 +1,5 @@
 import asyncio
 import traceback
-
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -19,20 +18,13 @@ async def post_init(application):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     admins = context.application.bot_data.setdefault("admins", [])
-
     if chat_id not in admins:
         admins.append(chat_id)
-
     await update.message.reply_text(
         "🤖 GOLD AI SCALPER PRO v3.1\n\n"
         "✅ Bot Online\n"
         "📡 AI Signal Engine Active\n\n"
-        "Commands:\n"
-        "/gold\n"
-        "/signal\n"
-        "/trend\n"
-        "/stats\n"
-        "/history"
+        "Commands:\n/gold\n/signal\n/trend\n/stats\n/history"
     )
 
 
@@ -48,46 +40,28 @@ def build_result(candles):
 
 async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-
         candles = get_candles()
-
         if candles is None:
-            await update.message.reply_text(
-                "❌ Market data unavailable."
-            )
+            await update.message.reply_text("❌ Market data unavailable.")
             return
-
         result = build_result(candles)
-
-        message = format_signal(candles, result)
-
-        await update.message.reply_text(message)
-
+        await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
-
         traceback.print_exc()
-
-        await update.message.reply_text(
-            f"❌ GOLD ERROR\n\n"
-            f"{type(e).__name__}\n\n"
-            f"{e}"
-        )
+        await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await gold(update, context)async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await gold(update, context)
+
+
+async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-
         candles = get_candles()
-
         if candles is None:
-            await update.message.reply_text(
-                "❌ Market data unavailable."
-            )
+            await update.message.reply_text("❌ Market data unavailable.")
             return
-
         result = build_result(candles)
-
         await update.message.reply_text(
             f"📊 1M Trend : {result['trend_1m']}\n"
             f"📊 5M Trend : {result['trend_5m']}\n"
@@ -99,22 +73,13 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔥 Confidence : {result['confidence']}%\n"
             f"📍 Market : {result['market_status']}"
         )
-
     except Exception as e:
-
         traceback.print_exc()
-
-        await update.message.reply_text(
-            f"❌ TREND ERROR\n\n"
-            f"{type(e).__name__}\n\n"
-            f"{e}"
-        )
+        await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     s = get_stats()
-
     await update.message.reply_text(
         f"📊 TRADE STATISTICS\n\n"
         f"📈 Total Signals : {s['total']}\n"
@@ -130,23 +95,14 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
-
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("gold", gold))
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("trend", trend))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("history", history))
-
     print("🚀 Gold AI Scalper Pro v3.1 Started...")
-
     app.run_polling()
 
 
