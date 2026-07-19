@@ -53,7 +53,34 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         return {
             "signal": "NO TRADE",
             "confidence": 0,
+            "ai_score": 0,
+            "grade": "-",
+            "market_status": "-",
+            "session": "-",
+            "session_active": True,
+            "trend_1m": "-",
+            "trend_5m": "-",
+            "trend_15m": "-",
+            "trend_strength": "-",
+            "ema_ok": False,
+            "adx_ok": False,
+            "vwap_ok": False,
+            "supertrend_ok": False,
+            "volume_ok": False,
+            "macd": {"macd": 0, "signal": 0, "trend": "-"},
+            "rsi": 0,
+            "pattern": "None",
+            "liquidity_sweep": "NO",
+            "buy_confirmations": 0,
+            "sell_confirmations": 0,
             "reasons": ["Not enough candles"],
+            "valid_minutes": SIGNAL_VALID_MINUTES,
+            "entry": None,
+            "sl": None,
+            "tp1": None,
+            "tp2": None,
+            "tp3": None,
+            "risk_reward": "-",
         }
 
     price = round(close[-1], 2)
@@ -176,3 +203,115 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
 
     # ==========================
     # Multi-Timeframe Trend (15) - full credit only if
+    # all three timeframes agree with the leading side
+    # ==========================
+    bullish_trends = {"Strong Bullish", "Bullish", "Weak Bullish"}
+    bearish_trends = {"Strong Bearish", "Bearish", "Weak Bearish"}
+
+    mtf_bull_count = sum(t in bullish_trends for t in [trend1, trend5, trend15])
+    mtf_bear_count = sum(t in bearish_trends for t in [trend1, trend5, trend15])
+
+    if mtf_bull_count == 3:
+        buy_score += W_MTF
+        buy_confirmations += 1
+        reasons.append("MTF Full Bullish Alignment")
+    elif mtf_bull_count == 2:
+        buy_score += W_MTF * 0.5
+        reasons.append("MTF Partial Bullish Alignment")
+
+    if mtf_bear_count == 3:
+        sell_score += W_MTF
+        sell_confirmations += 1
+        reasons.append("MTF Full Bearish Alignment")
+    elif mtf_bear_count == 2:
+        sell_score += W_MTF * 0.5
+        reasons.append("MTF Partial Bearish Alignment")
+
+    # ==========================
+    # Volume Filter (not scored, acts as a gate)
+    # ==========================
+    volume_ok = True
+    if volume and len(volume) >= 20:
+        recent_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
+        current_vol = volume[-1]
+        if recent_avg > 0:
+            volume_ok = current_vol >= recent_avg * LOW_VOLUME_RATIO
+            if not volume_ok:
+                reasons.append("Low Volume Warning")
+
+    # ==========================
+    # Candlestick pattern bonus
+    # ==========================
+    if pattern_direction == "Bullish":
+        buy_score += 5
+        reasons.append(f"Bullish Pattern: {pattern_name}")
+    elif pattern_direction == "Bearish":
+        sell_score += 5
+        reasons.append(f"Bearish Pattern: {pattern_name}")
+
+    # ==========================
+    # Smart Money Concepts bonus
+    # ==========================
+    if smc["bos_direction"] == "Bullish" or smc["choch_direction"] == "Bullish":
+        buy_score += 5
+    if smc["bos_direction"] == "Bearish" or smc["choch_direction"] == "Bearish":
+        sell_score += 5
+
+    if smc["liquidity"]:
+        reasons.append(f"Liquidity Sweep: {smc['liquidity_side']}")
+
+    # ==========================
+    # Final decision
+    # ==========================
+    min_score = BASE_MIN_SCORE if session_active else OFF_SESSION_MIN_SCORE
+    ai_score = round(max(buy_score, sell_score), 2)
+
+    if buy_score > sell_score and buy_score >= min_score and volume_ok:
+        final_signal = "BUY"
+    elif sell_score > buy_score and sell_score >= min_score and volume_ok:
+        final_signal = "SELL"
+    else:
+        final_signal = "NO TRADE"
+
+    if ai_score >= 90:
+        grade = "A+"
+    elif ai_score >= 80:
+        grade = "A"
+    elif ai_score >= 70:
+        grade = "B"
+    elif ai_score >= 60:
+        grade = "C"
+    else:
+        grade = "D"
+
+    market_status = "Active" if session_active else "Low Liquidity"
+
+    trade_levels = calculate_trade(final_signal, price, atr_value)
+
+    return {
+        "signal": final_signal,
+        "confidence": ai_score,
+        "ai_score": ai_score,
+        "grade": grade,
+        "market_status": market_status,
+        "session": session_name,
+        "session_active": session_active,
+        "trend_1m": trend1,
+        "trend_5m": trend5,
+        "trend_15m": trend15,
+        "trend_strength": trend_power,
+        "ema_ok": ema_bull or ema_bear,
+        "adx_ok": adx_value >= 25,
+        "vwap_ok": price > vwap_value,
+        "supertrend_ok": st["trend"] == "Bullish",
+        "volume_ok": volume_ok,
+        "macd": macd_value,
+        "rsi": rsi_value,
+        "pattern": pattern_name,
+        "liquidity_sweep": smc["liquidity_side"] if smc["liquidity"] else "NO",
+        "buy_confirmations": buy_confirmations,
+        "sell_confirmations": sell_confirmations,
+        "reasons": reasons,
+        "valid_minutes": SIGNAL_VALID_MINUTES,
+        **trade_levels,
+    }
