@@ -35,6 +35,7 @@ def build_result(candles):
         candles["low"],
         candles["timeframes"],
         candles.get("volume"),
+        candles.get("open"),
     )
 
 
