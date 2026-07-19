@@ -2,44 +2,28 @@ import pandas as pd
 
 
 def ema(values, period):
-    return round(
-        pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1], 2
-    )
+    return round(pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1], 2)
 
 
 def rsi(values, period=14):
     close = pd.Series(values)
-
     delta = close.diff()
-
     gain = delta.where(delta > 0, 0).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-
     rs = gain / loss
-
-    rsi = 100 - (100 / (1 + rs))
-
-    return round(rsi.iloc[-1], 2)
+    return round((100 - (100 / (1 + rs))).iloc[-1], 2)
 
 
 def macd(values):
     close = pd.Series(values)
-
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
-
     macd_line = ema12 - ema26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-
-    trend = "Bullish"
-
-    if macd_line.iloc[-1] < signal_line.iloc[-1]:
-        trend = "Bearish"
-
+    signal = macd_line.ewm(span=9, adjust=False).mean()
     return {
         "macd": round(macd_line.iloc[-1], 2),
-        "signal": round(signal_line.iloc[-1], 2),
-        "trend": trend,
+        "signal": round(signal.iloc[-1], 2),
+        "trend": "Bullish" if macd_line.iloc[-1] >= signal.iloc[-1] else "Bearish",
     }
 
 
@@ -47,75 +31,30 @@ def atr(high, low, close, period=14):
     high = pd.Series(high)
     low = pd.Series(low)
     close = pd.Series(close)
-
-    previous_close = close.shift(1)
-
-    tr1 = high - low
-    tr2 = (high - previous_close).abs()
-    tr3 = (low - previous_close).abs()
-
-    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr_value = true_range.rolling(period).mean()
-
-    return round(atr_value.iloc[-1], 2)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+    return round(tr.rolling(period).mean().iloc[-1], 2)
 
 
 def adx(high, low, close, period=14):
     high = pd.Series(high)
     low = pd.Series(low)
     close = pd.Series(close)
-
-    plus_dm = high.diff()
-    minus_dm = -low.diff()
-
-    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
-    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
-
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr_value = tr.rolling(period).mean()
-
-    plus_di = 100 * plus_dm.rolling(period).mean() / atr_value
-    minus_di = 100 * minus_dm.rolling(period).mean() / atr_value
-
-    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100
-
-    adx_value = dx.rolling(period).mean()
-
-    return round(adx_value.iloc[-1], 2)
-
-
-def vwap(high, low, close, volume):
-    high = pd.Series(high)
-    low = pd.Series(low)
-    close = pd.Series(close)
-    volume = pd.Series(volume)
-
-    typical_price = (high + low + close) / 3
-    value = (typical_price * volume).cumsum() / volume.cumsum()
-
-    return round(value.iloc[-1], 2)
-
-
-def bollinger_bands(values, period=20, std_dev=2):
-    close = pd.Series(values)
-
-    sma = close.rolling(period).mean()
-    std = close.rolling(period).std()
-
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-
-    return {
-        "upper": round(upper.iloc[-1], 2),
-        "middle": round(sma.iloc[-1], 2),
-        "lower": round(lower.iloc[-1], 2),
-    }
+    plus_dm = high.diff().clip(lower=0)
+    minus_dm = (-low.diff()).clip(lower=0)
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+    atrv = tr.rolling(period).mean()
+    plus = 100 * plus_dm.rolling(period).mean() / atrv
+    minus = 100 * minus_dm.rolling(period).mean() / atrv
+    dx = ((plus - minus).abs() / (plus + minus)) * 100
+    return round(dx.rolling(period).mean().iloc[-1], 2)
 
 
 def trend_strength(adx_value):
@@ -128,41 +67,27 @@ def trend_strength(adx_value):
     return "Weak"
 
 
-def supertrend(high, low, close, period=10, multiplier=3):
-    high = pd.Series(high).reset_index(drop=True)
-    low = pd.Series(low).reset_index(drop=True)
-    close = pd.Series(close).reset_index(drop=True)
+def vwap(high, low, close, volume):
+    tp = (pd.Series(high) + pd.Series(low) + pd.Series(close)) / 3
+    vol = pd.Series(volume)
+    return round(((tp * vol).cumsum() / vol.cumsum()).iloc[-1], 2)
 
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
-
-    hl2 = (high + low) / 2
-
-    upperband = hl2 + (multiplier * atr)
-    lowerband = hl2 - (multiplier * atr)
-
-    final_upper = upperband.copy()
-    final_lower = lowerband.copy()
-
-    trend = [True] * len(close)
-
-    for i in range(1, len(close)):
-        if close.iloc[i] > final_upper.iloc[i - 1]:
-            trend[i] = True
-        elif close.iloc[i] < final_lower.iloc[i - 1]:
-            trend[i] = False
-        else:
-            trend[i] = trend[i - 1]
-            if trend[i] and final_lower.iloc[i] < final_lower.iloc[i - 1]:
-                final_lower.iloc[i] = final_lower.iloc[i - 1]
-            if (not trend[i]) and final_upper.iloc[i] > final_upper.iloc[i - 1]:
-                final_upper.iloc[i] = final_upper.iloc[i - 1]
-
+def bollinger_bands(values, period=20, std_dev=2):
+    s = pd.Series(values)
+    mid = s.rolling(period).mean()
+    std = s.rolling(period).std()
     return {
-        "trend": "Bullish" if trend[-1] else "Bearish",
-        "value": round(final_lower.iloc[-1] if trend[-1] else final_upper.iloc[-1], 2),
+        "upper": round((mid + std * std_dev).iloc[-1], 2),
+        "middle": round(mid.iloc[-1], 2),
+        "lower": round((mid - std * std_dev).iloc[-1], 2),
     }
+
+
+def supertrend(high, low, close, period=10, multiplier=3):
+    atr_value = atr(high, low, close, period)
+    hl2 = (pd.Series(high).iloc[-1] + pd.Series(low).iloc[-1]) / 2
+    upper = hl2 + multiplier * atr_value
+    lower = hl2 - multiplier * atr_value
+    trend = "Bullish" if close[-1] > upper else "Bearish" if close[-1] < lower else "Bullish"
+    return {"trend": trend, "value": round(lower if trend=="Bullish" else upper,2)}
