@@ -12,6 +12,25 @@ from indicators import (
 
 from trend import get_trend
 from risk import calculate_trade
+from smart_money import analyze_smart_money
+from patterns import detect_pattern
+from session import get_current_session
+
+# ==========================
+# SCORE WEIGHTS (total = 100)
+# ==========================
+W_EMA = 15
+W_SUPERTREND = 20
+W_ADX = 15
+W_MACD = 15
+W_RSI = 10
+W_VWAP = 10
+W_MTF = 15
+
+BASE_MIN_SCORE = 70          # normal minimum score to trigger a signal
+OFF_SESSION_MIN_SCORE = 85   # stricter minimum during low-liquidity sessions
+LOW_VOLUME_RATIO = 0.7       # current volume must be >= 70% of recent average
+SIGNAL_VALID_MINUTES = 8
 
 
 def confidence_label(score):
@@ -28,7 +47,7 @@ def confidence_label(score):
     return "Weak"
 
 
-def get_signal(close, high, low, timeframes, volume=None):
+def get_signal(close, high, low, timeframes, volume=None, open_=None):
 
     if close is None or len(close) < 200:
         return {
@@ -61,159 +80,99 @@ def get_signal(close, high, low, timeframes, volume=None):
 
     bb = bollinger_bands(close)
     st = supertrend(high, low, close)
+    smc = analyze_smart_money(high, low, close)
 
+    session_name, session_active = get_current_session()
+
+    # ==========================
+    # Pattern detection (needs open prices; fall back gracefully)
+    # ==========================
+    if open_:
+        pattern_name, pattern_direction = detect_pattern(open_, high, low, close)
+    else:
+        pattern_name, pattern_direction = "None", None
+
+    reasons = []
     buy_score = 0
     sell_score = 0
 
     buy_confirmations = 0
     sell_confirmations = 0
-    reasons = []
+
+    ema_bull = ema20 > ema50 > ema200
+    ema_bear = ema20 < ema50 < ema200
 
     # ==========================
-    # BUY CONDITIONS
+    # EMA (15)
     # ==========================
-
-    if ema20 > ema50:
-        buy_score += 10
+    if ema_bull:
+        buy_score += W_EMA
         buy_confirmations += 1
-        reasons.append("EMA20 above EMA50")
+        reasons.append("EMA Bullish Stack")
+    if ema_bear:
+        sell_score += W_EMA
+        sell_confirmations += 1
+        reasons.append("EMA Bearish Stack")
 
-    if ema50 > ema200:
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("EMA50 above EMA200")
-
-    if price > ema20:
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("Price above EMA20")
-
-    if macd_value["trend"] == "Bullish":
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("Bullish MACD")
-
-    if 55 <= rsi_value <= 75:
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("Healthy RSI")
-
-    if adx_value >= 25:
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("Strong ADX")
-
-    if price > vwap_value:
-        buy_score += 10
-        buy_confirmations += 1
-        reasons.append("Above VWAP")
-
+    # ==========================
+    # Supertrend (20)
+    # ==========================
     if st["trend"] == "Bullish":
-        buy_score += 10
+        buy_score += W_SUPERTREND
         buy_confirmations += 1
         reasons.append("Bullish Supertrend")
-
-    # ==========================
-    # SELL CONDITIONS
-    # ==========================
-
-    if ema20 < ema50:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if ema50 < ema200:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if price < ema20:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if macd_value["trend"] == "Bearish":
-        sell_score += 10
-        sell_confirmations += 1
-
-    if 25 <= rsi_value <= 45:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if adx_value >= 25:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if price < vwap_value:
-        sell_score += 10
-        sell_confirmations += 1
-
-    if st["trend"] == "Bearish":
-        sell_score += 10
-        sell_confirmations += 1
-
-    # ==========================
-    # FINAL SIGNAL
-    # Sirf tab BUY/SELL denge jab score strong ho (>=70)
-    # AUR 5M + 15M trend dono ek hi direction confirm karein.
-    # Isse weak/fake signals reduce hote hain.
-    MIN_SIGNAL_SCORE = 70
-
-    buy_trend_confirmed = "Bullish" in trend5 and "Bullish" in trend15
-    sell_trend_confirmed = "Bearish" in trend5 and "Bearish" in trend15
-
-    if (
-        buy_score >= MIN_SIGNAL_SCORE
-        and buy_score > sell_score
-        and buy_trend_confirmed
-    ):
-        signal = "BUY"
-        ai_score = buy_score
-
-    elif (
-        sell_score >= MIN_SIGNAL_SCORE
-        and sell_score > buy_score
-        and sell_trend_confirmed
-    ):
-        signal = "SELL"
-        ai_score = sell_score
-
     else:
-        signal = "NO TRADE"
-        ai_score = max(buy_score, sell_score)
+        sell_score += W_SUPERTREND
+        sell_confirmations += 1
+        reasons.append("Bearish Supertrend")
 
-    confidence = min(ai_score, 100)
-    grade = confidence_label(confidence)
-    signal_quality = grade
+    # ==========================
+    # ADX (15) - strength only, added to whichever side already leads
+    # ==========================
+    if adx_value >= 25:
+        if buy_score >= sell_score:
+            buy_score += W_ADX
+            buy_confirmations += 1
+        else:
+            sell_score += W_ADX
+            sell_confirmations += 1
+        reasons.append("Strong ADX")
 
-    trade = calculate_trade(signal, price, atr_value)
+    # ==========================
+    # MACD (15)
+    # ==========================
+    if macd_value["trend"] == "Bullish":
+        buy_score += W_MACD
+        buy_confirmations += 1
+        reasons.append("Bullish MACD")
+    else:
+        sell_score += W_MACD
+        sell_confirmations += 1
+        reasons.append("Bearish MACD")
 
-    return {
-        "signal": signal,
-        "confidence": confidence,
-        "grade": grade,
-        "ai_score": ai_score,
-        "signal_quality": signal_quality,
-        "price": price,
-        "entry": trade["entry"],
-        "sl": trade["sl"],
-        "tp1": trade["tp1"],
-        "tp2": trade["tp2"],
-        "tp3": trade["tp3"],
-        "risk_reward": trade["risk_reward"],
-        "ema20": ema20,
-        "ema50": ema50,
-        "ema200": ema200,
-        "rsi": rsi_value,
-        "macd": macd_value,
-        "atr": atr_value,
-        "adx": adx_value,
-        "vwap": vwap_value,
-        "bollinger": bb,
-        "supertrend": st,
-        "trend_1m": trend1,
-        "trend_5m": trend5,
-        "trend_15m": trend15,
-        "trend_strength": trend_power,
-        "buy_confirmations": buy_confirmations,
-        "sell_confirmations": sell_confirmations,
-        "market_status": "TRENDING" if adx_value >= 25 else "RANGING",
-        "reasons": reasons,
-    }
+    # ==========================
+    # RSI (10)
+    # ==========================
+    if 55 <= rsi_value <= 75:
+        buy_score += W_RSI
+        buy_confirmations += 1
+        reasons.append("Healthy RSI (Bullish)")
+    elif 25 <= rsi_value <= 45:
+        sell_score += W_RSI
+        sell_confirmations += 1
+        reasons.append("Healthy RSI (Bearish)")
+
+    # ==========================
+    # VWAP (10)
+    # ==========================
+    if price > vwap_value:
+        buy_score += W_VWAP
+        buy_confirmations += 1
+        reasons.append("Above VWAP")
+    else:
+        sell_score += W_VWAP
+        sell_confirmations += 1
+        reasons.append("Below VWAP")
+
+    # ==========================
+    # Multi-Timeframe Trend (15) - full credit only if
