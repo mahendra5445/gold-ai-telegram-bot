@@ -27,6 +27,7 @@ def get_gold_tf(interval):
     candles = list(reversed(data["values"]))
 
     return {
+        "open": [float(x["open"]) for x in candles],
         "close": [float(x["close"]) for x in candles],
         "high": [float(x["high"]) for x in candles],
         "low": [float(x["low"]) for x in candles],
@@ -58,6 +59,7 @@ def get_btc_tf(interval):
     candles = list(reversed(data["values"]))
 
     return {
+        "open": [float(x["open"]) for x in candles],
         "close": [float(x["close"]) for x in candles],
         "high": [float(x["high"]) for x in candles],
         "low": [float(x["low"]) for x in candles],
@@ -82,6 +84,7 @@ def get_candles(asset="gold"):
     return {
         "asset": asset.upper(),
         "price": tf5["price"],
+        "open": tf5["open"],
         "close": tf5["close"],
         "high": tf5["high"],
         "low": tf5["low"],
