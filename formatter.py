@@ -1,16 +1,17 @@
 def format_signal(candles, result):
-    reasons = "\n".join([f"✅ {reason}" for reason in result["reasons"]])
+    reasons = "\n".join(f"✅ {r}" for r in result.get("reasons", []))
 
     signal_emoji = {
         "BUY": "🟢",
         "SELL": "🔴",
-        "NO TRADE": "🟡"
-    }.get(result["signal"], "⚪")
+        "NO TRADE": "🟡",
+    }.get(result.get("signal"), "⚪")
 
-    return f"""
-🤖 GOLD AI SCALPER PRO v2.1
+    price = round(float(candles["price"]), 2)
 
-💰 Price : {candles['price']}
+    return f"""🤖 GOLD AI SCALPER PRO v3.2
+
+💰 Price : {price:.2f}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -54,7 +55,7 @@ def format_signal(candles, result):
 
 📋 Reasons
 
-{reasons}
+{reasons if reasons else 'No confirmations'}
 
 ━━━━━━━━━━━━━━━━━━
 
