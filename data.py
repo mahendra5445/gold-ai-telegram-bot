@@ -1,48 +1,42 @@
-# See chat: data.py replacement
-import requests
-from config import TWELVE_DATA_API_KEY, GOLD_SYMBOL, BTC_SYMBOL
-
-TD_URL="https://api.twelvedata.com/time_series"
-BINANCE_URL="https://api.binance.com/api/v3/klines"
-
-def get_gold_tf(interval):
-    params={"symbol":GOLD_SYMBOL,"interval":interval,"outputsize":200,"apikey":TWELVE_DATA_API_KEY}
-    try:
-        data=requests.get(TD_URL,params=params,timeout=15).json()
-    except Exception:
-        return None
-    if "values" not in data:
-        return None
-    candles=list(reversed(data["values"]))
-    return {
-        "close":[float(x["close"]) for x in candles],
-        "high":[float(x["high"]) for x in candles],
-        "low":[float(x["low"]) for x in candles],
-        "volume":[float(x.get("volume",1)) for x in candles],
-        "price":float(candles[-1]["close"])
-    }
-
 def get_btc_tf(interval):
-    mp={"1min":"1m","5min":"5m","15min":"15m"}
-    try:
-        data=requests.get(BINANCE_URL,params={"symbol":BTC_SYMBOL,"interval":mp[interval],"limit":200},timeout=15).json()
-    except Exception:
-        return None
-    if not isinstance(data,list):
-        return None
-    return {
-        "close":[float(x[4]) for x in data],
-        "high":[float(x[2]) for x in data],
-        "low":[float(x[3]) for x in data],
-        "volume":[float(x[5]) for x in data],
-        "price":float(data[-1][4])
+    mapping = {
+        "1min": "1m",
+        "5min": "5m",
+        "15min": "15m",
     }
 
-def get_candles(asset="gold"):
-    if asset.lower()=="btc":
-        tf1=get_btc_tf("1min"); tf5=get_btc_tf("5min"); tf15=get_btc_tf("15min")
-    else:
-        tf1=get_gold_tf("1min"); tf5=get_gold_tf("5min"); tf15=get_gold_tf("15min")
-    if not all([tf1,tf5,tf15]):
-        return None
-    return {"asset":asset.upper(),"price":tf5["price"],"close":tf5["close"],"high":tf5["high"],"low":tf5["low"],"volume":tf5["volume"],"timeframes":{"1m":tf1["close"],"5m":tf5["close"],"15m":tf15["close"]}}
+    params = {
+        "symbol": BTC_SYMBOL,
+        "interval": mapping[interval],
+        "limit": 200,
+    }
+
+    try:
+        r = requests.get(BINANCE_URL, params=params, timeout=15)
+
+        print("BTC URL:", r.url)
+        print("Status:", r.status_code)
+        print("Response:", r.text[:500])
+
+        r.raise_for_status()
+        data = r.json()
+
+    except Exception as e:
+        print("BTC ERROR:", str(e))
+        return {
+            "error": str(e)
+        }
+
+    if not isinstance(data, list):
+        print("Unexpected Binance response:", data)
+        return {
+            "error": str(data)
+        }
+
+    return {
+        "close": [float(x[4]) for x in data],
+        "high": [float(x[2]) for x in data],
+        "low": [float(x[3]) for x in data],
+        "volume": [float(x[5]) for x in data],
+        "price": float(data[-1][4]),
+    }
