@@ -24,7 +24,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 GOLD AI SCALPER PRO v3.1\n\n"
         "✅ Bot Online\n"
         "📡 AI Signal Engine Active\n\n"
-        "Commands:\n/gold\n/signal\n/trend\n/stats\n/history"
+        "Commands:\n/gold\n/btc\n/signal\n/trend\n/stats\n/history"
     )
 
 
@@ -50,6 +50,19 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
         traceback.print_exc()
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
+
+
+async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        candles = get_candles("btc")
+        if candles is None:
+            await update.message.reply_text("❌ BTC market data unavailable.")
+            return
+        result = build_result(candles)
+        await update.message.reply_text(format_signal(candles, result))
+    except Exception as e:
+        traceback.print_exc()
+        await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await gold(update, context)
@@ -98,6 +111,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("gold", gold))
+    app.add_handler(CommandHandler("btc", btc))
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("trend", trend))
     app.add_handler(CommandHandler("stats", stats))
