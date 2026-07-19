@@ -10,19 +10,24 @@ stats = {
 }
 
 
-def save_trade(result):
+def save_trade(result, asset="gold"):
     signal = result.get("signal")
 
     if signal not in ["BUY", "SELL"]:
-        return
+        return None
 
     trade = {
         "id": len(trades) + 1,
+        "asset": asset,
         "signal": signal,
         "entry": float(result["entry"]),
         "sl": float(result["sl"]),
         "tp1": float(result["tp1"]),
         "tp2": float(result["tp2"]),
+        "tp3": float(result["tp3"]),
+        "hit_tp1": False,
+        "hit_tp2": False,
+        "hit_tp3": False,
         "status": "OPEN",
         "time": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
     }
@@ -33,6 +38,8 @@ def save_trade(result):
         stats["buy"] += 1
     else:
         stats["sell"] += 1
+
+    return trade
 
 
 def get_open_trades():
@@ -103,11 +110,12 @@ def history_text(limit=10):
     for trade in trades[-limit:][::-1]:
 
         text += (
-            f"#{trade['id']} | {trade['signal']}\n"
+            f"#{trade['id']} | {trade.get('asset','gold').upper()} | {trade['signal']}\n"
             f"Entry : {trade['entry']}\n"
             f"SL : {trade['sl']}\n"
             f"TP1 : {trade['tp1']}\n"
             f"TP2 : {trade['tp2']}\n"
+            f"TP3 : {trade.get('tp3', '-')}\n"
             f"Status : {trade['status']}\n"
             f"{trade['time']}\n\n"
         )
