@@ -102,7 +102,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 BUY Signals : {s['buy']}\n"
         f"🔴 SELL Signals : {s['sell']}\n"
         f"🎯 TP Hit : {s['tp']}\n"
-        f"🛑 SL Hit : {s['sl']}"
+        f"⚪ Breakeven : {s['be']}\n"
+        f"🛑 SL Hit : {s['sl']}\n"
+        f"🏆 Win Rate : {s['win_rate']}%"
     )
 
 
