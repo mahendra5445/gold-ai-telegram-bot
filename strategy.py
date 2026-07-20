@@ -179,8 +179,11 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     # ==========================
     # 9. VOLUME FILTER (current >= 85% of 20-candle average)
     # ==========================
-    volume_ok = False
-    if volume and len(volume) >= 20:
+    # Default True: if we have no reliable volume data (common for spot
+    # forex/gold tickers), we can't fail the check - treat as "not
+    # applicable" rather than penalizing the signal for missing data
+    volume_ok = True
+    if volume and len(volume) >= 20 and sum(volume[-20:]) > 0:
         recent_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
         current_vol = volume[-1]
         volume_ok = recent_avg > 0 and current_vol >= recent_avg * 0.85
