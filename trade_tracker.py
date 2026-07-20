@@ -161,16 +161,29 @@ def find_trade(trade_id: int) -> dict | None:
     return None
 
 
-def get_stats() -> dict:
+def get_stats(asset: str | None = None, since: str | None = None) -> dict:
     """
     Stats derived live from the trade list — never drifts out of sync
     regardless of restarts, cleanups, or any edge case.
+
+    asset — optional, filter to a single asset's trades (e.g. "eurusd").
+    since — optional, "YYYY-MM-DD" — only trades opened on/after this date
+            (trade["time"] is "YYYY-MM-DD HH:MM:SS", so a plain string
+            comparison works). Used for daily summaries.
+    No args = old behaviour, combined across every asset, all-time.
     """
-    buy  = sum(1 for t in _trades if t["signal"] == "BUY")
-    sell = sum(1 for t in _trades if t["signal"] == "SELL")
-    tp   = sum(1 for t in _trades if t["status"] == "TP")
-    sl   = sum(1 for t in _trades if t["status"] == "SL")
-    be   = sum(1 for t in _trades if t["status"] == "BE")
+    trades = _trades
+    if asset:
+        a = asset.lower()
+        trades = [t for t in trades if t["asset"].lower() == a]
+    if since:
+        trades = [t for t in trades if t["time"] >= since]
+
+    buy  = sum(1 for t in trades if t["signal"] == "BUY")
+    sell = sum(1 for t in trades if t["signal"] == "SELL")
+    tp   = sum(1 for t in trades if t["status"] == "TP")
+    sl   = sum(1 for t in trades if t["status"] == "SL")
+    be   = sum(1 for t in trades if t["status"] == "BE")
 
     closed   = tp + sl + be
     win_rate = round((tp / closed) * 100, 2) if closed > 0 else 0.0
@@ -186,18 +199,23 @@ def get_stats() -> dict:
     }
 
 
-def get_last_trades(limit: int = 10) -> list[dict]:
-    return list(reversed(_trades[-limit:]))
+def get_last_trades(limit: int = 10, asset: str | None = None) -> list[dict]:
+    trades = _trades
+    if asset:
+        a = asset.lower()
+        trades = [t for t in trades if t["asset"].lower() == a]
+    return list(reversed(trades[-limit:]))
 
 
-def history_text(limit: int = 10) -> str:
-    if not _trades:
+def history_text(limit: int = 10, asset: str | None = None) -> str:
+    trades = get_last_trades(limit, asset=asset)
+    if not trades:
         return "❌ No trades available."
 
     status_icon = {"OPEN": "🔵", "TP": "✅", "SL": "🛑", "BE": "⚪"}
     lines = ["📜 LAST TRADES\n"]
 
-    for trade in get_last_trades(limit):
+    for trade in trades:
         icon = status_icon.get(trade["status"], "❓")
         lines.append(
             f"#{trade['id']} | {trade['asset'].upper()} | "

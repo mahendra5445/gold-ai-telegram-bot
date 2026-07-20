@@ -7,8 +7,15 @@ Fixes applied:
   #9  API timeout                     — explicit 15-s timeout on every request.
  #11  Stale candle validation         — last candle timestamp checked; warning
                                         logged if data is older than MAX_STALE_H.
-  MT5 price fix                       — XAUUSD=X (spot) tried first; GC=F
-                                        (futures, ~$10-25 premium) is fallback.
+  MT5 price fix                       — spot ticker tried first; futures
+                                        fallback used only when configured
+                                        (gold).
+
+  Multi-asset refactor                — gold/BTC ke hardcoded branches hata
+                                        kar config.ASSETS registry se generic
+                                        bana diya gaya, taaki Oil, EUR/USD,
+                                        USD/JPY, LINK, ATOM sab isi code path
+                                        se guzrein bina duplication ke.
 """
 
 import logging
@@ -16,7 +23,7 @@ import time as _time
 
 import requests
 
-from config import BTC_SYMBOL, GOLD_SYMBOL, GOLD_SYMBOL_FUTURES
+from config import ASSETS
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +46,13 @@ MAX_STALE_H = 8
 # Retry settings
 MAX_RETRIES      = 3
 RETRY_BASE_DELAY = 1.0   # seconds; actual delays: 1 s, 2 s (2^0, 2^1)
+
+
+def _asset_cfg(asset: str) -> dict:
+    a = asset.lower()
+    if a not in ASSETS:
+        raise ValueError(f"Unknown asset '{asset}'. Known assets: {list(ASSETS)}")
+    return ASSETS[a]
 
 
 class _YahooGlitch(Exception):
@@ -169,34 +183,36 @@ def _fetch_tf(symbol: str, interval_key: str, label: str) -> dict:
 
 # ── public helpers ────────────────────────────────────────────────────────
 
-def get_gold_tf(interval: str) -> dict:
+def get_asset_tf(asset: str, interval: str) -> dict:
     """
-    Spot gold (XAUUSD=X) first — matches MT5 XAU/USD prices.
-    Falls back to COMEX Futures (GC=F) if spot is unavailable;
-    a warning is logged because futures carry a ~$10-25 premium.
+    Generic per-asset timeframe fetch. Tries the primary symbol first;
+    falls back to `fallback` (Yahoo ticker) if configured and primary fails
+    (only gold has one today — futures ~$10-25 premium vs spot).
     """
+    cfg   = _asset_cfg(asset)
+    label = cfg["label"]
+
     try:
-        return _fetch_tf(GOLD_SYMBOL, interval, "GOLD(Spot)")
-    except RuntimeError as spot_err:
+        return _fetch_tf(cfg["symbol"], interval, label)
+    except RuntimeError as primary_err:
+        if not cfg.get("fallback"):
+            raise
         logger.warning(
-            f"[GOLD] Spot ticker failed ({spot_err}); "
-            f"falling back to futures {GOLD_SYMBOL_FUTURES}"
+            f"[{label}] Primary ticker failed ({primary_err}); "
+            f"falling back to {cfg['fallback']}"
         )
-        try:
-            data = _fetch_tf(GOLD_SYMBOL_FUTURES, interval, "GOLD(Futures)")
-            logger.warning(
-                "[GOLD] Using futures price — may differ from MT5 spot by $10-25."
-            )
-            return data
-        except RuntimeError as fut_err:
-            raise RuntimeError(
-                f"Both spot and futures unavailable. "
-                f"Spot: {spot_err} | Futures: {fut_err}"
-            )
+        data = _fetch_tf(cfg["fallback"], interval, f"{label}(Fallback)")
+        logger.warning(f"[{label}] Using fallback ticker — price may differ from primary.")
+        return data
+
+
+# Backward-compatible wrappers (older code imports these names directly)
+def get_gold_tf(interval: str) -> dict:
+    return get_asset_tf("gold", interval)
 
 
 def get_btc_tf(interval: str) -> dict:
-    return _fetch_tf(BTC_SYMBOL, interval, "BTC")
+    return get_asset_tf("btc", interval)
 
 
 # ── external fallback price sources (jab Yahoo fail/glitch kare) ─────────
@@ -204,8 +220,10 @@ def get_btc_tf(interval: str) -> dict:
 # Gold : 1) Swissquote — asli broker ka forex feed hai, isliye price MT5
 #           ke XAU/USD se sabse zyada match karta hai. Free, no API key.
 #        2) gold-api.com — simple free spot gold API, backup ka backup.
-# BTC  : 1) Binance — sabse liquid exchange, no key needed.
-#        2) Coinbase — backup.
+# Crypto (BTC/LINK/ATOM): 1) Binance — sabse liquid exchange, no key needed.
+#        2) Coinbase — backup (sirf BTC ke liye supported).
+# Oil / Forex (EUR/USD, USD/JPY): koi free independent fallback nahi hai
+#        abhi — Yahoo retry hi final attempt hai in ke liye.
 
 def _swissquote_gold() -> float | None:
     """Swissquote XAU/USD — bid/ask ka mid price (broker-grade feed)."""
@@ -213,7 +231,6 @@ def _swissquote_gold() -> float | None:
     r = requests.get(url, headers=YF_HEADERS, timeout=10)
     r.raise_for_status()
     data = r.json()
-    # Response: list of platforms, har ek mein spreadProfilePrices[].bid/ask
     for platform in data:
         profiles = platform.get("spreadProfilePrices") or []
         for p in profiles:
@@ -231,10 +248,10 @@ def _goldapi_gold() -> float | None:
     return float(price) if price else None
 
 
-def _binance_btc() -> float | None:
+def _binance_price(binance_symbol: str) -> float | None:
     r = requests.get(
         "https://api.binance.com/api/v3/ticker/price",
-        params={"symbol": "BTCUSDT"}, timeout=10,
+        params={"symbol": binance_symbol}, timeout=10,
     )
     r.raise_for_status()
     price = r.json().get("price")
@@ -252,12 +269,22 @@ def get_external_price(asset: str) -> float | None:
     """
     Yahoo ke alawa independent sources se live price.
     Sources order mein try hote hain; jo pehla kaam kare wahi return.
+    Asset ke type ke hisaab se alag sources use hote hain — agar koi
+    configured nahi hai (Oil, EUR/USD, USD/JPY abhi), None return hota hai
+    aur caller Yahoo futures/retry pe hi depend karta hai.
     """
-    sources = (
-        [("Swissquote", _swissquote_gold), ("gold-api", _goldapi_gold)]
-        if asset.lower() != "btc"
-        else [("Binance", _binance_btc), ("Coinbase", _coinbase_btc)]
-    )
+    cfg = _asset_cfg(asset)
+    a   = asset.lower()
+
+    if a == "gold":
+        sources = [("Swissquote", _swissquote_gold), ("gold-api", _goldapi_gold)]
+    elif cfg.get("binance"):
+        sources = [("Binance", lambda: _binance_price(cfg["binance"]))]
+        if a == "btc":
+            sources.append(("Coinbase", _coinbase_btc))
+    else:
+        sources = []
+
     for name, fn in sources:
         try:
             price = fn()
@@ -271,16 +298,12 @@ def get_external_price(asset: str) -> float | None:
 
 def get_latest_price(asset: str = "gold") -> float | None:
     """
-    Lightweight price check for the trade monitor.
-    Returns None on failure (monitor skips and retries next cycle).
-    Gold uses spot first, then futures fallback.
+    Lightweight price check for the trade monitor / manual commands.
+    Returns None on failure (caller skips and retries next cycle).
     """
-    if asset.lower() == "btc":
-        symbol   = BTC_SYMBOL
-        fallback = None
-    else:
-        symbol   = GOLD_SYMBOL
-        fallback = GOLD_SYMBOL_FUTURES
+    cfg      = _asset_cfg(asset)
+    symbol   = cfg["symbol"]
+    fallback = cfg.get("fallback")
 
     def _single(sym: str) -> float | None:
         url    = YF_URL.format(symbol=sym)
@@ -301,30 +324,20 @@ def get_latest_price(asset: str = "gold") -> float | None:
             recent.sort()
             median = recent[len(recent) // 2]
 
-        # BUG FIX (MT5 price mismatch): 1-minute candle closes kuch minute
-        # purane hote hain, isliye bot ka price MT5 se alag dikh raha tha.
-        # Yahoo ke meta mein "regularMarketPrice" LIVE quote hota hai jo
-        # MT5 ke price se sabse zyada match karta hai. Use prefer karte
-        # hain — lekin median ke against sanity-check ke saath (agar live
-        # quote median se 1%+ door hai to woh glitch hai, median hi lo).
+        # Yahoo's meta "regularMarketPrice" is a LIVE quote, preferred
+        # over the median — but sanity-checked against it (if live quote
+        # diverges 1%+ from median it's a glitch, use median instead).
         live = result0.get("meta", {}).get("regularMarketPrice")
         if live is not None:
             live = float(live)
             if median is None or abs(live - median) / median <= 0.01:
                 return live
-            # Glitch detected: live quote median se 1%+ door hai —
-            # yahan Yahoo pe bharosa nahi, caller external source try karega.
             raise _YahooGlitch(
                 f"live={live} vs median={median} — divergence too big"
             )
 
         return median
 
-    # BUG FIX (Yahoo glitch fallback): pehle glitch pe sirf Yahoo ka hi
-    # median use hota tha — lekin agar Yahoo ka poora feed hi kharab ho
-    # (stuck/stale data) to median bhi galat hota tha. Ab glitch ya full
-    # failure pe independent sources (Swissquote/gold-api ya Binance/
-    # Coinbase) se live price aata hai jo MT5 se match karta hai.
     try:
         price = _single(symbol)
         if price is not None:
@@ -339,7 +352,6 @@ def get_latest_price(asset: str = "gold") -> float | None:
         ext = get_external_price(asset)
         if ext is not None:
             return ext
-        # External bhi fail — futures fallback try karo, warna None
         if fallback:
             try:
                 return _single(fallback)
@@ -353,7 +365,7 @@ def get_latest_price(asset: str = "gold") -> float | None:
                 if price is not None:
                     return price
             except Exception as fb_err:
-                logger.error(f"[PRICE ERROR] {asset}: spot={primary_err} futures={fb_err}")
+                logger.error(f"[PRICE ERROR] {asset}: primary={primary_err} fallback={fb_err}")
         else:
             logger.error(f"[PRICE ERROR] {asset}: {primary_err}")
         return get_external_price(asset)
@@ -361,17 +373,14 @@ def get_latest_price(asset: str = "gold") -> float | None:
 
 def get_candles(asset: str = "gold") -> dict:
     """
-    Fetch all three timeframes.
+    Fetch all three timeframes for any configured asset.
     Raises RuntimeError with a descriptive message on failure.
     """
-    if asset.lower() == "btc":
-        tf1  = get_btc_tf("1min")
-        tf5  = get_btc_tf("5min")
-        tf15 = get_btc_tf("15min")
-    else:
-        tf1  = get_gold_tf("1min")
-        tf5  = get_gold_tf("5min")
-        tf15 = get_gold_tf("15min")
+    _asset_cfg(asset)   # validates + raises a clear error for unknown assets
+
+    tf1  = get_asset_tf(asset, "1min")
+    tf5  = get_asset_tf(asset, "5min")
+    tf15 = get_asset_tf(asset, "15min")
 
     return {
         "asset":  asset.upper(),

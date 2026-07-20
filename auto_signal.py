@@ -19,11 +19,12 @@ import asyncio
 import logging
 import time
 
+from config import ASSETS, ASSET_LIST
 from data import get_candles, get_latest_price
 from formatter import format_signal
 from news import is_high_impact_news
 from risk import calculate_trade
-from shared_state import trade_lock
+from shared_state import trade_lock, heartbeat
 from strategy import get_signal
 from trade_tracker import has_open_trade, save_trade
 
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 SIGNAL_COOLDOWN_SEC: int = 15 * 60   # 15 minutes (relaxed from 25 for more frequent signals)
 
 _last_signal_time: dict[str, float] = {}   # asset -> unix timestamp of last sent signal
-_last_signal_msg:  dict[str, str | None] = {"gold": None, "btc": None}
+_last_signal_msg:  dict[str, str | None] = {a: None for a in ASSET_LIST}
 
 
 def _in_cooldown(asset: str) -> bool:
@@ -63,6 +64,10 @@ def _in_cooldown(asset: str) -> bool:
 
 async def _check_asset(application, asset: str) -> None:
 
+    cfg      = ASSETS[asset.lower()]
+    decimals = cfg["decimals"]
+    label    = cfg["label"]
+
     # ── 1. Fetch data (outside lock — network I/O can be slow) ───────────
     candles = get_candles(asset)
     result  = get_signal(
@@ -72,6 +77,7 @@ async def _check_asset(application, asset: str) -> None:
         candles["timeframes"],
         candles.get("volume"),
         candles.get("open"),
+        decimals=decimals,
     )
 
     if result["signal"] == "NO TRADE":
@@ -92,13 +98,13 @@ async def _check_asset(application, asset: str) -> None:
     live_price = get_latest_price(asset)
     if live_price is not None:
         fresh_levels = calculate_trade(
-            result["signal"], live_price, result.get("atr_value", 0)
+            result["signal"], live_price, result.get("atr_value", 0), decimals=decimals
         )
         result.update(fresh_levels)
         candles["price"] = live_price
 
     # Build message outside lock (pure CPU, no I/O)
-    message = format_signal(candles, result)
+    message = format_signal(candles, result, decimals=decimals, label=label)
 
     # BUG FIX: admins check pehle sirf message bhejne se pehle hota tha —
     # tab tak trade save ho chuka hota tha aur cooldown set ho jaata tha.
@@ -151,21 +157,36 @@ async def _check_asset(application, asset: str) -> None:
 
 async def auto_signal_job(application) -> None:
     logger.info("[AUTO] Signal job started")
+    heartbeat["last_cycle"] = time.time()   # baseline so watchdog doesn't false-alarm at boot
     while True:
         # News filter
         try:
             if is_high_impact_news():
                 logger.info("[NEWS FILTER] High-impact USD news — signals paused 5 min")
+                # Still stamp the heartbeat — this is an intentional pause,
+                # not a stuck loop. A news window can span up to ~60 minutes
+                # (30 min before + 30 min after the event), which is longer
+                # than watchdog's 40-min stale threshold — without this the
+                # watchdog would fire a false "stuck" alert during a
+                # perfectly normal news pause.
+                heartbeat["last_cycle"] = time.time()
                 await asyncio.sleep(300)
                 continue
         except Exception as e:
             logger.error(f"[AUTO] News check failed: {e}")
 
         # Check each asset independently so one failure can't block the other
-        for asset in ("gold", "btc"):
+        for asset in ASSET_LIST:
             try:
                 await _check_asset(application, asset)
             except Exception as e:
                 logger.error(f"[AUTO] {asset.upper()} error: {e}")
+
+        # Heartbeat — watchdog.py uses this to detect a stuck/dead loop.
+        # Stamped even if every asset above failed, since the loop itself
+        # is still alive; watchdog cares about the *process* being stuck,
+        # not about individual asset failures (those already log their own
+        # errors above and self-recover next cycle).
+        heartbeat["last_cycle"] = time.time()
 
         await asyncio.sleep(900)   # 15-minute cycle (relaxed from 30 for more frequent checks)

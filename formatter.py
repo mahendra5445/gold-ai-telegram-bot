@@ -2,7 +2,7 @@ def _check(ok):
     return "✅" if ok else "❌"
 
 
-def format_signal(candles, result):
+def format_signal(candles, result, decimals=2, label=None):
     is_no_trade = result.get("signal") == "NO TRADE"
     reason_icon = "ℹ️" if is_no_trade else "✅"
     reasons = "\n".join(f"{reason_icon} {r}" for r in result.get("reasons", []))
@@ -13,7 +13,8 @@ def format_signal(candles, result):
         "NO TRADE": "🟡",
     }.get(result.get("signal"), "⚪")
 
-    price = round(float(candles["price"]), 2)
+    price = round(float(candles["price"]), decimals)
+    asset_label = label or candles.get("asset", "GOLD")
 
     session_line = result.get("session", "-")
     if not result.get("session_active", True):
@@ -30,9 +31,9 @@ def format_signal(candles, result):
         v = result.get(key)
         return v if v is not None else "-"
 
-    return f"""🤖 GOLD AI SCALPER PRO V5.0
+    return f"""🤖 AI SCALPER PRO V5.0 — {asset_label}
 
-💰 Price : {price:.2f}
+💰 Price : {price:.{decimals}f}
 
 ━━━━━━━━━━━━━━━━━━
 

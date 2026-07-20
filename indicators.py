@@ -2,7 +2,7 @@ import pandas as pd
 
 
 def ema(values, period):
-    return round(pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1], 2)
+    return round(pd.Series(values).ewm(span=period, adjust=False).mean().iloc[-1], 6)
 
 
 def rsi(values, period=14):
@@ -27,8 +27,8 @@ def macd(values):
     macd_line = ema12 - ema26
     signal = macd_line.ewm(span=9, adjust=False).mean()
     return {
-        "macd": round(macd_line.iloc[-1], 2),
-        "signal": round(signal.iloc[-1], 2),
+        "macd": round(macd_line.iloc[-1], 6),
+        "signal": round(signal.iloc[-1], 6),
         "trend": "Bullish" if macd_line.iloc[-1] >= signal.iloc[-1] else "Bearish",
     }
 
@@ -42,7 +42,7 @@ def atr(high, low, close, period=14):
         (high - close.shift()).abs(),
         (low - close.shift()).abs(),
     ], axis=1).max(axis=1)
-    return round(tr.rolling(period).mean().iloc[-1], 2)
+    return round(tr.rolling(period).mean().iloc[-1], 6)
 
 
 def adx(high, low, close, period=14):
@@ -80,7 +80,7 @@ def trend_strength(adx_value):
 def vwap(high, low, close, volume):
     tp = (pd.Series(high) + pd.Series(low) + pd.Series(close)) / 3
     vol = pd.Series(volume)
-    return round(((tp * vol).cumsum() / vol.cumsum()).iloc[-1], 2)
+    return round(((tp * vol).cumsum() / vol.cumsum()).iloc[-1], 6)
 
 
 def bollinger_bands(values, period=20, std_dev=2):
@@ -88,9 +88,9 @@ def bollinger_bands(values, period=20, std_dev=2):
     mid = s.rolling(period).mean()
     std = s.rolling(period).std()
     return {
-        "upper": round((mid + std * std_dev).iloc[-1], 2),
-        "middle": round(mid.iloc[-1], 2),
-        "lower": round((mid - std * std_dev).iloc[-1], 2),
+        "upper": round((mid + std * std_dev).iloc[-1], 6),
+        "middle": round(mid.iloc[-1], 6),
+        "lower": round((mid - std * std_dev).iloc[-1], 6),
     }
 
 
@@ -124,7 +124,7 @@ def atr_moving_average(high, low, close, atr_period=14, ma_period=20):
         (low_s - close_s.shift()).abs(),
     ], axis=1).max(axis=1)
     atr_series = tr.rolling(atr_period).mean()
-    return round(atr_series.rolling(ma_period).mean().iloc[-1], 2)
+    return round(atr_series.rolling(ma_period).mean().iloc[-1], 6)
 
 
 def supertrend(high, low, close, period=10, multiplier=3):
@@ -162,7 +162,7 @@ def supertrend(high, low, close, period=10, multiplier=3):
         # Bearish bhej raha tha, jo SELL ki taraf bias deta tha.
         # "Neutral" return karne se strategy mein st_bull aur st_bear dono
         # False rahenge - na BUY ki taraf jhukao, na SELL ki taraf.
-        return {"trend": "Neutral", "value": round(close[-1], 2)}
+        return {"trend": "Neutral", "value": round(close[-1], 6)}
 
     final_upper = basic_upper.copy()
     final_lower = basic_lower.copy()
@@ -187,4 +187,4 @@ def supertrend(high, low, close, period=10, multiplier=3):
 
     last_trend = trend[-1]
     last_value = final_lower.iloc[-1] if last_trend == "Bullish" else final_upper.iloc[-1]
-    return {"trend": last_trend, "value": round(last_value, 2)}
+    return {"trend": last_trend, "value": round(last_value, 6)}

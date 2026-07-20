@@ -12,6 +12,7 @@ Fixes applied:
 import asyncio
 import logging
 
+from config import ASSETS
 from data import get_latest_price
 from shared_state import trade_lock
 from trade_tracker import (
@@ -79,6 +80,9 @@ async def _check_trade(application, trade: dict, price: float) -> None:
     notifications: list[str] = []
     trade_closed = False
 
+    decimals = ASSETS.get(trade["asset"].lower(), {}).get("decimals", 2)
+    price_display = round(price, decimals)
+
     # ── Critical section: mutate state atomically ─────────────────────────
     async with trade_lock:
         # Re-check status inside lock (another coroutine may have closed
@@ -106,7 +110,7 @@ async def _check_trade(application, trade: dict, price: float) -> None:
                             f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
                             f"Entry : {trade['entry']}\n"
                             f"SL    : {trade['sl']}\n"
-                            f"Price : {round(price, 2)}\n\n"
+                            f"Price : {price_display}\n\n"
                             f"Trade Closed ❌"
                         )
                     else:
@@ -114,7 +118,7 @@ async def _check_trade(application, trade: dict, price: float) -> None:
                             f"⚪ BREAKEVEN\n\n"
                             f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
                             f"Entry : {trade['entry']}\n"
-                            f"Price : {round(price, 2)}\n\n"
+                            f"Price : {price_display}\n\n"
                             f"Closed at Breakeven — TP1 was already secured ✅"
                         )
                 trade_closed = True
@@ -127,7 +131,7 @@ async def _check_trade(application, trade: dict, price: float) -> None:
                     f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
                     f"Entry : {trade['entry']}\n"
                     f"TP1   : {trade['tp1']}\n"
-                    f"Price : {round(price, 2)}\n\n"
+                    f"Price : {price_display}\n\n"
                     f"✅ SL moved to Breakeven"
                 )
 
@@ -138,7 +142,7 @@ async def _check_trade(application, trade: dict, price: float) -> None:
                     f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
                     f"Entry : {trade['entry']}\n"
                     f"TP2   : {trade['tp2']}\n"
-                    f"Price : {round(price, 2)}\n\n"
+                    f"Price : {price_display}\n\n"
                     f"✅ Trail SL for remaining position"
                 )
 
@@ -150,7 +154,7 @@ async def _check_trade(application, trade: dict, price: float) -> None:
                         f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
                         f"Entry : {trade['entry']}\n"
                         f"TP3   : {trade['tp3']}\n"
-                        f"Price : {round(price, 2)}\n\n"
+                        f"Price : {price_display}\n\n"
                         f"✅ Trade Closed — Full Target Hit 🏆"
                     )
                 trade_closed = True

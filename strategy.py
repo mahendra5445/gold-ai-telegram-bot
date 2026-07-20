@@ -97,12 +97,12 @@ def _empty_result(reason="Not enough candles"):
     }
 
 
-def get_signal(close, high, low, timeframes, volume=None, open_=None):
+def get_signal(close, high, low, timeframes, volume=None, open_=None, decimals=2):
 
     if close is None or len(close) < 200:
         return _empty_result()
 
-    price = round(close[-1], 2)
+    price = round(close[-1], decimals)
 
     ema20 = ema(close, 20)
     ema50 = ema(close, 50)
@@ -417,7 +417,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
 
     market_status = "Active" if session_active else "Low Liquidity"
 
-    trade_levels = calculate_trade(final_signal, price, atr_value)
+    trade_levels = calculate_trade(final_signal, price, atr_value, decimals=decimals)
 
     return {
         "signal": final_signal,

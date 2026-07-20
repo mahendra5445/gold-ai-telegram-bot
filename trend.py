@@ -2,7 +2,7 @@ from indicators import ema
 
 
 def get_trend(close_prices):
-    price = round(close_prices[-1], 2)
+    price = round(close_prices[-1], 6)
 
     ema20 = ema(close_prices, 20)
     ema50 = ema(close_prices, 50)
