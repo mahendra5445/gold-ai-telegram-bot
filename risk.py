@@ -21,7 +21,13 @@ def calculate_trade(signal, price, atr):
 
     entry = round(price, 2)
 
-    sl_mult = 1.5
+    # BUG FIX: SL was only 1.5x ATR(5m). On gold that's often just $1-2,
+    # which sits inside normal broker spread + tick noise, so trades were
+    # getting stopped out almost immediately even when direction was
+    # right (this is why SL Hit was far higher than TP Hit / win rate
+    # was ~0%). Widened to 2.5x ATR — a more realistic scalping stop.
+    sl_mult = 2.5
+
     # atr can come through as NaN if upstream data had a gap - guard that
     # explicitly since `nan <= 0` is False in Python, so the old
     # "risk <= 0" fallback below would silently let NaN through and turn
@@ -31,8 +37,14 @@ def calculate_trade(signal, price, atr):
 
     risk = round(atr * sl_mult, 2)
 
-    if risk <= 0:
-        risk = round(price * 0.001, 2)  # fallback tiny risk to avoid div by 0
+    # BUG FIX: minimum SL floor. Previously the price*0.001 fallback only
+    # kicked in when risk was <= 0. In quiet markets ATR could still
+    # produce a small positive risk (e.g. ~$1) that slipped straight
+    # through spread/noise and got stopped out instantly. Now we always
+    # enforce a floor of 0.15% of price, regardless of how small ATR is.
+    min_risk = round(price * 0.0015, 2)
+    if risk < min_risk:
+        risk = min_risk
 
     # Reward multiples of risk -> TP1 = 2R, TP2 = 3R, TP3 = 5R (runner target)
     tp1_reward = risk * 2.0

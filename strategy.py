@@ -87,6 +87,7 @@ def _empty_result(reason="Not enough candles"):
         "sell_confirmations": 0,
         "reasons": [reason],
         "valid_minutes": SIGNAL_VALID_MINUTES,
+        "atr_value": 0,
         "entry": None,
         "sl": None,
         "tp1": None,
@@ -444,5 +445,6 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         "sell_confirmations": sell_confirmations,
         "reasons": reasons,
         "valid_minutes": SIGNAL_VALID_MINUTES,
+        "atr_value": atr_value,
         **trade_levels,
     }

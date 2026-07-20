@@ -218,10 +218,18 @@ def get_latest_price(asset: str = "gold") -> float | None:
             ["indicators"]["quote"][0]
             .get("close") or []
         )
-        for c in reversed(closes):
-            if c is not None:
-                return float(c)
-        return None
+        # BUG FIX: previously returned the single most recent tick.
+        # Yahoo's free spot-gold feed occasionally reports one bad/stale
+        # tick (a brief spike or a stuck value) that doesn't match a real
+        # broker/MT5 price at all — this alone can fake-trigger an SL
+        # that never really happened. Taking the median of the last few
+        # valid ticks filters out that kind of single-tick glitch while
+        # still tracking the live price closely.
+        recent = [float(c) for c in reversed(closes) if c is not None][:5]
+        if not recent:
+            return None
+        recent.sort()
+        return recent[len(recent) // 2]
 
     try:
         price = _single(symbol)

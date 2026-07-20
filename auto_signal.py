@@ -19,9 +19,10 @@ import asyncio
 import logging
 import time
 
-from data import get_candles
+from data import get_candles, get_latest_price
 from formatter import format_signal
 from news import is_high_impact_news
+from risk import calculate_trade
 from shared_state import trade_lock
 from strategy import get_signal
 from trade_tracker import has_open_trade, save_trade
@@ -69,6 +70,25 @@ async def _check_asset(application, asset: str) -> None:
     if result["signal"] == "NO TRADE":
         logger.info(f"[AUTO] {asset.upper()} → No Trade")
         return
+
+    # BUG FIX: `result["entry"]` (and therefore SL/TP1/TP2/TP3) was
+    # calculated off `candles["price"]`, which is the close of the last
+    # FULLY CLOSED 5-minute candle. That price can already be several
+    # minutes old by the time the signal is posted, so it routinely
+    # differed from the live MT5 price — and if gold moved during that
+    # gap, the trade could already be much closer to (or even past) its
+    # SL the moment it "opened". Here we pull one more near-live price
+    # and re-run calculate_trade() with it, so the posted entry matches
+    # what you'd actually see on MT5 at signal time. If the live fetch
+    # fails for any reason we just keep the candle-based levels instead
+    # of blocking the signal.
+    live_price = get_latest_price(asset)
+    if live_price is not None:
+        fresh_levels = calculate_trade(
+            result["signal"], live_price, result.get("atr_value", 0)
+        )
+        result.update(fresh_levels)
+        candles["price"] = live_price
 
     # Build message outside lock (pure CPU, no I/O)
     message = format_signal(candles, result)
