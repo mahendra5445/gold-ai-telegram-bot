@@ -1,16 +1,14 @@
 import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY")
 
-# Gold
-GOLD_SYMBOL = "XAU/USD"
+# Gold - Yahoo Finance ticker for spot gold vs USD
+GOLD_SYMBOL = "XAUUSD=X"
 
-# Bitcoin (Twelve Data)
-BTC_SYMBOL = "BTC/USD"
+# Bitcoin - Yahoo Finance ticker
+BTC_SYMBOL = "BTC-USD"
 
 # Compatibility (purane code ke liye)
 SYMBOL = GOLD_SYMBOL
 
 INTERVAL = "1min"
-OUTPUTSIZE = 200
