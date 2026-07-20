@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # After a signal fires we ignore further signals for this asset until
 # SIGNAL_COOLDOWN_SEC seconds have passed.  This is independent of the
 # 30-min polling cycle and survives message-string changes (price drift).
-SIGNAL_COOLDOWN_SEC: int = 25 * 60   # 25 minutes
+SIGNAL_COOLDOWN_SEC: int = 15 * 60   # 15 minutes (relaxed from 25 for more frequent signals)
 
 _last_signal_time: dict[str, float] = {}   # asset -> unix timestamp of last sent signal
 _last_signal_msg:  dict[str, str | None] = {"gold": None, "btc": None}
@@ -168,4 +168,4 @@ async def auto_signal_job(application) -> None:
             except Exception as e:
                 logger.error(f"[AUTO] {asset.upper()} error: {e}")
 
-        await asyncio.sleep(1800)   # 30-minute cycle
+        await asyncio.sleep(900)   # 15-minute cycle (relaxed from 30 for more frequent checks)

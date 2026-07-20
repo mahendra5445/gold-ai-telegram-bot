@@ -32,10 +32,10 @@ W_ATR = 5
 W_MTF = 15
 W_LIQUIDITY = 10
 
-MIN_SCORE = 75               # V5: nothing fires below this
-MIN_CONFIRMATIONS = 9        # was 10 - relaxed by 1 to allow more setups through,
-                              # but anything below 10 gets tagged "Reduced Risk"
-                              # (see position_size below) so quality is still visible
+MIN_SCORE = 68                # relaxed from 75 -> more setups qualify, still a solid bar
+MIN_CONFIRMATIONS = 8         # relaxed from 9 -> anything below 10 still gets tagged
+                               # "Reduced Risk" (see position_size below) so quality
+                               # is still visible even as more trades pass through
 SIGNAL_VALID_MINUTES = 8
 
 STRICT_BULL = {"Strong Bullish", "Bullish"}
@@ -374,7 +374,9 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
             return 82.0
         if confirmations == 9:
             return 70.0
-        return round(min(65.0, score * 0.7), 1)
+        if confirmations == 8:
+            return 60.0
+        return round(min(55.0, score * 0.7), 1)
 
     active_confirmations = buy_confirmations if final_signal == "BUY" else \
         sell_confirmations if final_signal == "SELL" else max(buy_confirmations, sell_confirmations)
@@ -396,6 +398,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
             return "Standard Size", "75%"
         if confirmations == 9:
             return "Reduced Risk - Half Size", "50%"
+        if confirmations == 8:
+            return "Reduced Risk - Quarter Size", "25%"
         return "Not Traded", "0%"
 
     signal_tier, position_size_pct = position_sizing(active_confirmations) if final_signal != "NO TRADE" else ("-", "-")

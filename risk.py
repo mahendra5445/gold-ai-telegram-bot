@@ -26,7 +26,7 @@ def calculate_trade(signal, price, atr):
     # getting stopped out almost immediately even when direction was
     # right (this is why SL Hit was far higher than TP Hit / win rate
     # was ~0%). Widened to 2.5x ATR — a more realistic scalping stop.
-    sl_mult = 2.5
+    sl_mult = 2.0
 
     # atr can come through as NaN if upstream data had a gap - guard that
     # explicitly since `nan <= 0` is False in Python, so the old
@@ -46,10 +46,10 @@ def calculate_trade(signal, price, atr):
     if risk < min_risk:
         risk = min_risk
 
-    # Reward multiples of risk -> TP1 = 2R, TP2 = 3R, TP3 = 5R (runner target)
-    tp1_reward = risk * 2.0
-    tp2_reward = risk * 3.0
-    tp3_reward = risk * 5.0
+    # Reward multiples of risk -> TP1 = 2.5R, TP2 = 4R, TP3 = 6R (runner target)
+    tp1_reward = risk * 2.5
+    tp2_reward = risk * 4.0
+    tp3_reward = risk * 6.0
 
     if signal == "BUY":
         sl = round(entry - risk, 2)

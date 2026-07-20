@@ -147,7 +147,7 @@ def _fetch_tf(symbol: str, interval_key: str, label: str) -> dict:
     """
     Up to MAX_RETRIES attempts with exponential back-off (1 s, 2 s).
     Uses time.sleep() — acceptable because the bot only fetches data
-    every 30 minutes and a brief event-loop pause is far better than
+    every 15 minutes and a brief event-loop pause is far better than
     a missing candle.
     """
     last_err: Exception | None = None
