@@ -3,10 +3,12 @@ from indicators import (
     rsi,
     macd,
     atr,
+    atr_moving_average,
     adx,
     trend_strength,
     vwap,
     bollinger_bands,
+    bollinger_signal,
     supertrend,
 )
 
@@ -17,20 +19,24 @@ from patterns import detect_pattern
 from session import get_current_session
 
 # ==========================
-# SCORE WEIGHTS (total = 100)
+# GOLD AI SCALPER PRO V5 - SCORE WEIGHTS (total = 100)
 # ==========================
 W_EMA = 15
-W_SUPERTREND = 20
-W_ADX = 15
-W_MACD = 15
-W_RSI = 10
+W_ADX = 10
+W_SUPERTREND = 15
 W_VWAP = 10
+W_MACD = 10
+W_RSI = 10
+W_VOLUME = 10
+W_ATR = 5
 W_MTF = 15
+W_LIQUIDITY = 10
 
-BASE_MIN_SCORE = 55          # normal minimum score to trigger a signal
-OFF_SESSION_MIN_SCORE = 70   # stricter minimum during low-liquidity sessions
-LOW_VOLUME_RATIO = 0.7       # current volume must be >= 70% of recent average
+MIN_SCORE = 80               # V5: nothing fires below this
 SIGNAL_VALID_MINUTES = 8
+
+STRICT_BULL = {"Strong Bullish", "Bullish"}
+STRICT_BEAR = {"Strong Bearish", "Bearish"}
 
 
 def confidence_label(score):
@@ -47,41 +53,48 @@ def confidence_label(score):
     return "Weak"
 
 
+def _empty_result(reason="Not enough candles"):
+    return {
+        "signal": "NO TRADE",
+        "confidence": 0,
+        "ai_score": 0,
+        "grade": "-",
+        "market_status": "-",
+        "session": "-",
+        "session_active": True,
+        "trend_1m": "-",
+        "trend_5m": "-",
+        "trend_15m": "-",
+        "trend_strength": "-",
+        "ema_ok": False,
+        "adx_ok": False,
+        "vwap_ok": False,
+        "supertrend_ok": False,
+        "volume_ok": False,
+        "atr_ok": False,
+        "liquidity_ok": False,
+        "macd": {"macd": 0, "signal": 0, "trend": "-"},
+        "rsi": 0,
+        "pattern": "None",
+        "liquidity_sweep": "NO",
+        "bollinger": "None",
+        "buy_confirmations": 0,
+        "sell_confirmations": 0,
+        "reasons": [reason],
+        "valid_minutes": SIGNAL_VALID_MINUTES,
+        "entry": None,
+        "sl": None,
+        "tp1": None,
+        "tp2": None,
+        "tp3": None,
+        "risk_reward": "-",
+    }
+
+
 def get_signal(close, high, low, timeframes, volume=None, open_=None):
 
     if close is None or len(close) < 200:
-        return {
-            "signal": "NO TRADE",
-            "confidence": 0,
-            "ai_score": 0,
-            "grade": "-",
-            "market_status": "-",
-            "session": "-",
-            "session_active": True,
-            "trend_1m": "-",
-            "trend_5m": "-",
-            "trend_15m": "-",
-            "trend_strength": "-",
-            "ema_ok": False,
-            "adx_ok": False,
-            "vwap_ok": False,
-            "supertrend_ok": False,
-            "volume_ok": False,
-            "macd": {"macd": 0, "signal": 0, "trend": "-"},
-            "rsi": 0,
-            "pattern": "None",
-            "liquidity_sweep": "NO",
-            "buy_confirmations": 0,
-            "sell_confirmations": 0,
-            "reasons": ["Not enough candles"],
-            "valid_minutes": SIGNAL_VALID_MINUTES,
-            "entry": None,
-            "sl": None,
-            "tp1": None,
-            "tp2": None,
-            "tp3": None,
-            "risk_reward": "-",
-        }
+        return _empty_result()
 
     price = round(close[-1], 2)
 
@@ -92,12 +105,12 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     rsi_value = rsi(close)
     macd_value = macd(close)
     atr_value = atr(high, low, close)
+    atr_ma_value = atr_moving_average(high, low, close)
     adx_value = adx(high, low, close)
 
     trend1 = get_trend(timeframes["1m"])
     trend5 = get_trend(timeframes["5m"])
     trend15 = get_trend(timeframes["15m"])
-
     trend_power = trend_strength(adx_value)
 
     if volume:
@@ -106,172 +119,170 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         vwap_value = price
 
     bb = bollinger_bands(close)
+    bb_signal = bollinger_signal(close, high, low)
     st = supertrend(high, low, close)
     smc = analyze_smart_money(high, low, close)
 
     session_name, session_active = get_current_session()
 
-    # ==========================
-    # Pattern detection (needs open prices; fall back gracefully)
-    # ==========================
     if open_:
         pattern_name, pattern_direction = detect_pattern(open_, high, low, close)
     else:
         pattern_name, pattern_direction = "None", None
 
-    reasons = []
-    buy_score = 0
-    sell_score = 0
-
-    buy_confirmations = 0
-    sell_confirmations = 0
-
+    # ==========================
+    # 2. EMA FILTER
+    # ==========================
     ema_bull = ema20 > ema50 > ema200
     ema_bear = ema20 < ema50 < ema200
 
     # ==========================
-    # EMA (15)
+    # 3. ADX FILTER
     # ==========================
-    if ema_bull:
-        buy_score += W_EMA
-        buy_confirmations += 1
-        reasons.append("EMA Bullish Stack")
-    if ema_bear:
-        sell_score += W_EMA
-        sell_confirmations += 1
-        reasons.append("EMA Bearish Stack")
+    adx_ok = adx_value >= 25
 
     # ==========================
-    # Supertrend (20)
+    # 4. SUPERTREND
     # ==========================
-    if st["trend"] == "Bullish":
-        buy_score += W_SUPERTREND
-        buy_confirmations += 1
-        reasons.append("Bullish Supertrend")
-    else:
-        sell_score += W_SUPERTREND
-        sell_confirmations += 1
-        reasons.append("Bearish Supertrend")
+    st_bull = st["trend"] == "Bullish"
+    st_bear = st["trend"] == "Bearish"
 
     # ==========================
-    # ADX (15) - strength only, added to whichever side already leads
+    # 5. VWAP
     # ==========================
-    if adx_value >= 25:
-        if buy_score >= sell_score:
-            buy_score += W_ADX
-            buy_confirmations += 1
-        else:
-            sell_score += W_ADX
-            sell_confirmations += 1
-        reasons.append("Strong ADX")
+    vwap_bull = price > vwap_value
+    vwap_bear = price < vwap_value
 
     # ==========================
-    # MACD (15)
+    # 6. RSI (widened bands)
     # ==========================
-    if macd_value["trend"] == "Bullish":
-        buy_score += W_MACD
-        buy_confirmations += 1
-        reasons.append("Bullish MACD")
-    else:
-        sell_score += W_MACD
-        sell_confirmations += 1
-        reasons.append("Bearish MACD")
+    rsi_bull = 55 <= rsi_value <= 72
+    rsi_bear = 28 <= rsi_value <= 45
 
     # ==========================
-    # RSI (10)
+    # 7. MACD (line vs signal + histogram)
     # ==========================
-    if 55 <= rsi_value <= 75:
-        buy_score += W_RSI
-        buy_confirmations += 1
-        reasons.append("Healthy RSI (Bullish)")
-    elif 25 <= rsi_value <= 45:
-        sell_score += W_RSI
-        sell_confirmations += 1
-        reasons.append("Healthy RSI (Bearish)")
+    histogram = round(macd_value["macd"] - macd_value["signal"], 4)
+    macd_bull = macd_value["macd"] > macd_value["signal"] and histogram > 0
+    macd_bear = macd_value["macd"] < macd_value["signal"] and histogram < 0
 
     # ==========================
-    # VWAP (10)
-    # ==========================
-    if price > vwap_value:
-        buy_score += W_VWAP
-        buy_confirmations += 1
-        reasons.append("Above VWAP")
-    else:
-        sell_score += W_VWAP
-        sell_confirmations += 1
-        reasons.append("Below VWAP")
-
-    # ==========================
-    # Multi-Timeframe Trend (15) - full credit only if
-    # all three timeframes agree with the leading side
+    # 8. MULTI TIMEFRAME (2-of-3 agreement, includes Weak variants)
     # ==========================
     bullish_trends = {"Strong Bullish", "Bullish", "Weak Bullish"}
     bearish_trends = {"Strong Bearish", "Bearish", "Weak Bearish"}
-
     mtf_bull_count = sum(t in bullish_trends for t in [trend1, trend5, trend15])
     mtf_bear_count = sum(t in bearish_trends for t in [trend1, trend5, trend15])
-
-    if mtf_bull_count == 3:
-        buy_score += W_MTF
-        buy_confirmations += 1
-        reasons.append("MTF Full Bullish Alignment")
-    elif mtf_bull_count == 2:
-        buy_score += W_MTF * 0.5
-        reasons.append("MTF Partial Bullish Alignment")
-
-    if mtf_bear_count == 3:
-        sell_score += W_MTF
-        sell_confirmations += 1
-        reasons.append("MTF Full Bearish Alignment")
-    elif mtf_bear_count == 2:
-        sell_score += W_MTF * 0.5
-        reasons.append("MTF Partial Bearish Alignment")
+    mtf_bull = mtf_bull_count >= 2
+    mtf_bear = mtf_bear_count >= 2
 
     # ==========================
-    # Volume Filter (not scored, acts as a gate)
+    # 9. VOLUME FILTER (current >= 85% of 20-candle average)
     # ==========================
-    volume_ok = True
+    volume_ok = False
     if volume and len(volume) >= 20:
         recent_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
         current_vol = volume[-1]
-        if recent_avg > 0:
-            volume_ok = current_vol >= recent_avg * LOW_VOLUME_RATIO
-            if not volume_ok:
-                reasons.append("Low Volume Warning")
+        volume_ok = recent_avg > 0 and current_vol >= recent_avg * 0.85
 
     # ==========================
-    # Candlestick pattern bonus
+    # 10. ATR FILTER (scoring bonus only, not a hard gate)
     # ==========================
-    if pattern_direction == "Bullish":
-        buy_score += 5
-        reasons.append(f"Bullish Pattern: {pattern_name}")
-    elif pattern_direction == "Bearish":
-        sell_score += 5
-        reasons.append(f"Bearish Pattern: {pattern_name}")
+    atr_ok = bool(atr_ma_value) and atr_value > atr_ma_value
 
     # ==========================
-    # Smart Money Concepts bonus
+    # 12. LIQUIDITY FILTER (avoid fake breakouts / raw sweep entries)
     # ==========================
-    if smc["bos_direction"] == "Bullish" or smc["choch_direction"] == "Bullish":
-        buy_score += 5
-    if smc["bos_direction"] == "Bearish" or smc["choch_direction"] == "Bearish":
-        sell_score += 5
-
-    if smc["liquidity"]:
-        reasons.append(f"Liquidity Sweep: {smc['liquidity_side']}")
+    liquidity_ok = not smc["fake_breakout"]
 
     # ==========================
-    # Final decision
+    # 14. SESSION FILTER - info only now, not a hard gate
+    # (BTC trades 24/7 and this was cutting too many valid gold setups)
     # ==========================
-    min_score = BASE_MIN_SCORE if session_active else OFF_SESSION_MIN_SCORE
-    ai_score = round(max(buy_score, sell_score), 2)
+    session_ok = True
 
-    if buy_score > sell_score and buy_score >= min_score and volume_ok:
+    # ==========================
+    # SCORE (only counts the side currently being evaluated)
+    # ==========================
+    def score_side(is_bull):
+        s = 0
+        s += W_EMA if (ema_bull if is_bull else ema_bear) else 0
+        s += W_ADX if adx_ok else 0
+        s += W_SUPERTREND if (st_bull if is_bull else st_bear) else 0
+        s += W_VWAP if (vwap_bull if is_bull else vwap_bear) else 0
+        s += W_MACD if (macd_bull if is_bull else macd_bear) else 0
+        s += W_RSI if (rsi_bull if is_bull else rsi_bear) else 0
+        s += W_VOLUME if volume_ok else 0
+        s += W_ATR if atr_ok else 0
+        s += W_MTF if (mtf_bull if is_bull else mtf_bear) else 0
+        s += W_LIQUIDITY if liquidity_ok else 0
+        return s
+
+    buy_score = score_side(True)
+    sell_score = score_side(False)
+
+    buy_confirmations = sum([
+        ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
+        rsi_bull, volume_ok, atr_ok, mtf_bull, liquidity_ok,
+    ])
+    sell_confirmations = sum([
+        ema_bear, adx_ok, st_bear, vwap_bear, macd_bear,
+        rsi_bear, volume_ok, atr_ok, mtf_bear, liquidity_ok,
+    ])
+
+    # ==========================
+    # 17. FINAL CONFIRMATION
+    # ==========================
+    buy_all_true = all([
+        ema_bull, adx_ok, st_bull, vwap_bull, rsi_bull, macd_bull,
+        mtf_bull, volume_ok, liquidity_ok, session_ok,
+    ])
+    sell_all_true = all([
+        ema_bear, adx_ok, st_bear, vwap_bear, rsi_bear, macd_bear,
+        mtf_bear, volume_ok, liquidity_ok, session_ok,
+    ])
+
+    reasons = []
+    final_signal = "NO TRADE"
+
+    if buy_all_true and buy_score >= MIN_SCORE:
         final_signal = "BUY"
-    elif sell_score > buy_score and sell_score >= min_score and volume_ok:
+        reasons = [
+            "EMA Bullish Stack", "ADX Strong", "Bullish Supertrend",
+            "Above VWAP", f"RSI Healthy ({rsi_value})", "Bullish MACD",
+            "MTF Bullish Alignment", "Volume OK",
+            "No Fake Breakout / Clean Liquidity",
+        ]
+    elif sell_all_true and sell_score >= MIN_SCORE:
         final_signal = "SELL"
+        reasons = [
+            "EMA Bearish Stack", "ADX Strong", "Bearish Supertrend",
+            "Below VWAP", f"RSI Healthy ({rsi_value})", "Bearish MACD",
+            "MTF Bearish Alignment", "Volume OK",
+            "No Fake Breakout / Clean Liquidity",
+        ]
     else:
-        final_signal = "NO TRADE"
+        checklist_bull = {
+            "EMA": ema_bull, "ADX": adx_ok, "Supertrend": st_bull,
+            "VWAP": vwap_bull, "RSI": rsi_bull, "MACD": macd_bull,
+            "MTF": mtf_bull, "Volume": volume_ok, "ATR": atr_ok,
+            "Liquidity": liquidity_ok, "Session": session_ok,
+        }
+        checklist_bear = {
+            "EMA": ema_bear, "ADX": adx_ok, "Supertrend": st_bear,
+            "VWAP": vwap_bear, "RSI": rsi_bear, "MACD": macd_bear,
+            "MTF": mtf_bear, "Volume": volume_ok, "ATR": atr_ok,
+            "Liquidity": liquidity_ok, "Session": session_ok,
+        }
+        checklist = checklist_bull if buy_score >= sell_score else checklist_bear
+        failed = [k for k, v in checklist.items() if not v]
+        reasons = [f"NO TRADE - failed: {', '.join(failed)}"] if failed else ["NO TRADE - score below threshold"]
+        if pattern_direction:
+            reasons.append(f"{pattern_direction} Pattern (info only): {pattern_name}")
+        if bb_signal != "None":
+            reasons.append(f"Bollinger (info only): {bb_signal}")
+
+    ai_score = round(buy_score if final_signal == "BUY" else sell_score if final_signal == "SELL" else max(buy_score, sell_score), 2)
 
     if ai_score >= 90:
         grade = "A+"
@@ -301,14 +312,17 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         "trend_15m": trend15,
         "trend_strength": trend_power,
         "ema_ok": ema_bull or ema_bear,
-        "adx_ok": adx_value >= 25,
-        "vwap_ok": price > vwap_value,
-        "supertrend_ok": st["trend"] == "Bullish",
+        "adx_ok": adx_ok,
+        "vwap_ok": vwap_bull,
+        "supertrend_ok": st_bull,
         "volume_ok": volume_ok,
+        "atr_ok": atr_ok,
+        "liquidity_ok": liquidity_ok,
         "macd": macd_value,
         "rsi": rsi_value,
         "pattern": pattern_name,
         "liquidity_sweep": smc["liquidity_side"] if smc["liquidity"] else "NO",
+        "bollinger": bb_signal,
         "buy_confirmations": buy_confirmations,
         "sell_confirmations": sell_confirmations,
         "reasons": reasons,
