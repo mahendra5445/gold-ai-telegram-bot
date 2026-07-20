@@ -1,4 +1,3 @@
-
 import asyncio
 
 from data import get_latest_price
@@ -28,7 +27,7 @@ def _target_hit(trade, price):
     # Stop Loss checked first - protects capital, closes trade immediately
     sl_hit = (is_buy and price <= trade["sl"]) or (not is_buy and price >= trade["sl"])
     if sl_hit:
-        return [("sl", None)]
+        return [("be" if trade["hit_tp1"] else "sl", None)]
 
     if not trade["hit_tp1"]:
         if (is_buy and price >= trade["tp1"]) or (not is_buy and price <= trade["tp1"]):
@@ -62,8 +61,21 @@ async def _check_trade(application, trade, price):
             )
             return  # trade closed, nothing else to check
 
+        if level == "be":
+            update_trade(trade["id"], "BE")
+            await _notify_all(
+                application,
+                f"⚪ BREAKEVEN\n\n"
+                f"#{trade['id']} | {trade['asset'].upper()} | {trade['signal']}\n"
+                f"Entry : {trade['entry']}\n"
+                f"Price : {round(price, 2)}\n\n"
+                f"Trade Closed at breakeven (TP1 was already secured)",
+            )
+            return  # trade closed, nothing else to check
+
         if level == "tp1":
             trade["hit_tp1"] = True
+            trade["sl"] = trade["entry"]  # actually move SL to breakeven now
             await _notify_all(
                 application,
                 f"🎯 TP1 HIT\n\n"
@@ -71,7 +83,7 @@ async def _check_trade(application, trade, price):
                 f"Entry : {trade['entry']}\n"
                 f"TP1 : {trade['tp1']}\n"
                 f"Price : {round(price, 2)}\n\n"
-                f"✅ Move SL to breakeven",
+                f"✅ SL moved to breakeven",
             )
 
         elif level == "tp2":
