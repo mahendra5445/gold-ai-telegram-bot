@@ -33,6 +33,9 @@ W_MTF = 15
 W_LIQUIDITY = 10
 
 MIN_SCORE = 75               # V5: nothing fires below this
+MIN_CONFIRMATIONS = 9        # was 10 - relaxed by 1 to allow more setups through,
+                              # but anything below 10 gets tagged "Reduced Risk"
+                              # (see position_size below) so quality is still visible
 SIGNAL_VALID_MINUTES = 8
 
 STRICT_BULL = {"Strong Bullish", "Bullish"}
@@ -59,6 +62,8 @@ def _empty_result(reason="Not enough candles"):
         "confidence": 0,
         "ai_score": 0,
         "grade": "-",
+        "signal_tier": "-",
+        "position_size": "-",
         "market_status": "-",
         "session": "-",
         "session_active": True,
@@ -254,9 +259,18 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     elif pattern_direction == "Bearish":
         sell_score += 5
 
-    if session_name in ["London", "New York", "London-New York Overlap"]:
+    # NOTE: was comparing against "London-New York Overlap" (hyphen) but
+    # session.py actually returns "London + New York Overlap" (plus sign),
+    # so the bonus never fired during the overlap window. Substring check
+    # below matches "London", "New York", and the overlap string in one go.
+    if "London" in session_name or "New York" in session_name:
         buy_score += 3
         sell_score += 3
+
+    # Scores are weighted to sum to 100 but bonuses (pattern +5, session +3)
+    # can push them over - always cap at 100.
+    buy_score = min(buy_score, 100)
+    sell_score = min(sell_score, 100)
 
     buy_confirmations = sum([
         ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
@@ -272,30 +286,47 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     # ==========================
     # 17. FINAL CONFIRMATION
     # ==========================
-    buy_all_true = buy_confirmations >= 10
-    sell_all_true = sell_confirmations >= 10
+    buy_all_true = buy_confirmations >= MIN_CONFIRMATIONS
+    sell_all_true = sell_confirmations >= MIN_CONFIRMATIONS
+
+    def build_reasons(is_bull):
+        """
+        Build the reasons list from the SAME booleans used to count
+        confirmations, so Telegram's displayed reasons always match the
+        buy/sell confirmation count - no more hardcoded lists that claim
+        e.g. "Volume OK" when volume_ok was actually False.
+        """
+        checks = [
+            (ema_bull if is_bull else ema_bear,
+             "EMA Bullish Stack" if is_bull else "EMA Bearish Stack"),
+            (adx_ok, "ADX Strong"),
+            (st_bull if is_bull else st_bear,
+             "Bullish Supertrend" if is_bull else "Bearish Supertrend"),
+            (vwap_bull if is_bull else vwap_bear,
+             "Above VWAP" if is_bull else "Below VWAP"),
+            (macd_bull if is_bull else macd_bear,
+             "Bullish MACD" if is_bull else "Bearish MACD"),
+            (rsi_bull if is_bull else rsi_bear, f"RSI Healthy ({rsi_value})"),
+            (mtf_bull if is_bull else mtf_bear,
+             "MTF Bullish Alignment" if is_bull else "MTF Bearish Alignment"),
+            (volume_ok, "Volume OK"),
+            (atr_ok, "ATR Expansion"),
+            (volume_spike_ok, "Volume Spike"),
+            (candle_bull_ok if is_bull else candle_bear_ok,
+             "Bullish Candle Confirmed" if is_bull else "Bearish Candle Confirmed"),
+            (liquidity_ok, "No Fake Breakout / Clean Liquidity"),
+        ]
+        return [label for ok, label in checks if ok]
 
     reasons = []
     final_signal = "NO TRADE"
 
     if buy_all_true and buy_score >= MIN_SCORE:
         final_signal = "BUY"
-        reasons = [
-            "EMA Bullish Stack", "ADX Strong", "Bullish Supertrend",
-            "Above VWAP", f"RSI Healthy ({rsi_value})", "Bullish MACD",
-            "MTF Bullish Alignment", "Volume OK", "Volume Spike",
-            "Bullish Candle Confirmed",
-            "No Fake Breakout / Clean Liquidity",
-        ]
+        reasons = build_reasons(True)
     elif sell_all_true and sell_score >= MIN_SCORE:
         final_signal = "SELL"
-        reasons = [
-            "EMA Bearish Stack", "ADX Strong", "Bearish Supertrend",
-            "Below VWAP", f"RSI Healthy ({rsi_value})", "Bearish MACD",
-            "MTF Bearish Alignment", "Volume OK", "Volume Spike",
-            "Bearish Candle Confirmed",
-            "No Fake Breakout / Clean Liquidity",
-        ]
+        reasons = build_reasons(False)
     else:
         checklist_bull = {
             "EMA": ema_bull, "ADX": adx_ok, "Supertrend": st_bull,
@@ -320,6 +351,53 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
             reasons.append(f"Bollinger (info only): {bb_signal}")
 
     ai_score = round(buy_score if final_signal == "BUY" else sell_score if final_signal == "SELL" else max(buy_score, sell_score), 2)
+    ai_score = min(ai_score, 100)
+
+    def confidence_from_confirmations(confirmations, score):
+        """
+        Confidence is no longer just a copy of ai_score - it's driven by
+        HOW MANY confirmations agreed, per spec:
+          9  confirmations -> 70%  (new relaxed tier - Reduced Risk)
+          10 confirmations -> 82%
+          11 confirmations -> 90%
+          12 confirmations -> 98-100% (scaled by score within that band)
+        Below 9 (NO TRADE cases) it falls back to a damped score-based
+        estimate so it never reaches the 70%+ band without 9+ confirmations.
+        """
+        if confirmations >= 12:
+            bonus = max(0.0, min(1.0, (score - 90) / 10))  # 0..1
+            return round(98 + bonus * 2, 1)  # 98 -> 100
+        if confirmations == 11:
+            return 90.0
+        if confirmations == 10:
+            return 82.0
+        if confirmations == 9:
+            return 70.0
+        return round(min(65.0, score * 0.7), 1)
+
+    active_confirmations = buy_confirmations if final_signal == "BUY" else \
+        sell_confirmations if final_signal == "SELL" else max(buy_confirmations, sell_confirmations)
+    confidence = min(confidence_from_confirmations(active_confirmations, ai_score), 100)
+
+    def position_sizing(confirmations):
+        """
+        Confirmation count -> suggested risk tier. This is what makes the
+        relaxed 9-confirmation threshold safe to trade: a 9-confirmation
+        signal is clearly flagged as lower quality and paired with a
+        smaller suggested size, instead of being treated the same as a
+        clean 12/12 setup.
+        """
+        if confirmations >= 12:
+            return "Full Size", "100%"
+        if confirmations == 11:
+            return "Full Size", "100%"
+        if confirmations == 10:
+            return "Standard Size", "75%"
+        if confirmations == 9:
+            return "Reduced Risk - Half Size", "50%"
+        return "Not Traded", "0%"
+
+    signal_tier, position_size_pct = position_sizing(active_confirmations) if final_signal != "NO TRADE" else ("-", "-")
 
     if ai_score >= 90:
         grade = "A+"
@@ -338,9 +416,11 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
 
     return {
         "signal": final_signal,
-        "confidence": ai_score,
+        "confidence": confidence,
         "ai_score": ai_score,
         "grade": grade,
+        "signal_tier": signal_tier,
+        "position_size": position_size_pct,
         "market_status": market_status,
         "session": session_name,
         "session_active": session_active,
@@ -350,8 +430,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         "trend_strength": trend_power,
         "ema_ok": ema_bull or ema_bear,
         "adx_ok": adx_ok,
-        "vwap_ok": vwap_bull,
-        "supertrend_ok": st_bull,
+        "vwap_ok": vwap_bear if final_signal == "SELL" else vwap_bull,
+        "supertrend_ok": st_bear if final_signal == "SELL" else st_bull,
         "volume_ok": volume_ok,
         "atr_ok": atr_ok,
         "liquidity_ok": liquidity_ok,

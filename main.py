@@ -23,7 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in admins:
         admins.append(chat_id)
     await update.message.reply_text(
-        "🤖 GOLD AI SCALPER PRO v3.1\n\n"
+        "🤖 GOLD AI SCALPER PRO V5.0\n\n"
         "✅ Bot Online\n"
         "📡 AI Signal Engine Active\n\n"
         "Commands:\n/gold\n/btc\n/signal\n/trend\n/stats\n/history"
@@ -112,7 +112,7 @@ def main():
     app.add_handler(CommandHandler("trend", trend))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("history", history))
-    print("🚀 Gold AI Scalper Pro v3.1 Started...")
+    print("🚀 Gold AI Scalper Pro V5.0 Started...")
     app.run_polling()
 
 

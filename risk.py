@@ -1,3 +1,6 @@
+import math
+
+
 def calculate_trade(signal, price, atr):
     """
     Smart Risk Management
@@ -19,16 +22,22 @@ def calculate_trade(signal, price, atr):
     entry = round(price, 2)
 
     sl_mult = 1.5
+    # atr can come through as NaN if upstream data had a gap - guard that
+    # explicitly since `nan <= 0` is False in Python, so the old
+    # "risk <= 0" fallback below would silently let NaN through and turn
+    # every SL/TP into "nan" in the Telegram message.
+    if atr is None or (isinstance(atr, float) and math.isnan(atr)):
+        atr = 0
+
     risk = round(atr * sl_mult, 2)
 
     if risk <= 0:
         risk = round(price * 0.001, 2)  # fallback tiny risk to avoid div by 0
 
-    # Reward multiples of risk -> TP1 = 2 ATR, TP2 = 3 ATR (min RR 1:2),
-    # TP3 kept as an optional runner target beyond TP2
+    # Reward multiples of risk -> TP1 = 2R, TP2 = 3R, TP3 = 5R (runner target)
     tp1_reward = risk * 2.0
     tp2_reward = risk * 3.0
-    tp3_reward = risk * 4.0
+    tp3_reward = risk * 5.0
 
     if signal == "BUY":
         sl = round(entry - risk, 2)

@@ -3,7 +3,9 @@ def _check(ok):
 
 
 def format_signal(candles, result):
-    reasons = "\n".join(f"✅ {r}" for r in result.get("reasons", []))
+    is_no_trade = result.get("signal") == "NO TRADE"
+    reason_icon = "ℹ️" if is_no_trade else "✅"
+    reasons = "\n".join(f"{reason_icon} {r}" for r in result.get("reasons", []))
 
     signal_emoji = {
         "BUY": "🟢",
@@ -17,15 +19,20 @@ def format_signal(candles, result):
     if not result.get("session_active", True):
         session_line += " ⚠️"
 
-    return f"""🤖 GOLD AI SCALPER PRO v4.0
+    # Display-side safety net - always clamp to 100 even if a future edit
+    # upstream forgets to cap them.
+    ai_score_display = min(result['ai_score'], 100)
+    confidence_display = min(result['confidence'], 100)
+
+    return f"""🤖 GOLD AI SCALPER PRO V5.0
 
 💰 Price : {price:.2f}
 
 ━━━━━━━━━━━━━━━━━━
 
-🟢 AI Score : {result['ai_score']}/100
+🟢 AI Score : {ai_score_display}/100
 🏆 Grade : {result['grade']}
-⭐ Confidence : {result['confidence']}%
+⭐ Confidence : {confidence_display}%
 📈 Market : {result['market_status']}
 🕘 Session : {session_line}
 
@@ -50,6 +57,7 @@ def format_signal(candles, result):
 ━━━━━━━━━━━━━━━━━━
 
 {signal_emoji} SIGNAL : {result['signal']}
+📐 Tier : {result.get('signal_tier', '-')} ({result.get('position_size', '-')} Position Size)
 
 🎯 Entry : {result['entry']}
 🛑 SL : {result['sl']}
