@@ -8,7 +8,7 @@ def get_gold_tf(interval):
     params = {
         "symbol": GOLD_SYMBOL,
         "interval": interval,
-        "outputsize": 200,
+        "outputsize": 210,
         "apikey": TWELVE_DATA_API_KEY,
     }
 
@@ -24,7 +24,7 @@ def get_gold_tf(interval):
         print(data)
         return None
 
-    candles = list(reversed(data["values"]))
+    candles = list(reversed(data["values"]))[:-1]  # drop current forming candle - only trade closed candles
 
     return {
         "open": [float(x["open"]) for x in candles],
@@ -40,7 +40,7 @@ def get_btc_tf(interval):
     params = {
         "symbol": BTC_SYMBOL,
         "interval": interval,
-        "outputsize": 200,
+        "outputsize": 210,
         "apikey": TWELVE_DATA_API_KEY,
     }
 
@@ -56,7 +56,7 @@ def get_btc_tf(interval):
         print(data)
         return None
 
-    candles = list(reversed(data["values"]))
+    candles = list(reversed(data["values"]))[:-1]  # drop current forming candle - only trade closed candles
 
     return {
         "open": [float(x["open"]) for x in candles],
