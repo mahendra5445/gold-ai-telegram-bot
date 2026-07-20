@@ -7,6 +7,7 @@ stats = {
     "sell": 0,
     "tp": 0,
     "sl": 0,
+    "be": 0,
 }
 
 
@@ -64,6 +65,9 @@ def update_trade(trade_id, status):
         elif status == "SL":
             stats["sl"] += 1
 
+        elif status == "BE":
+            stats["be"] += 1
+
         return True
 
     return False
@@ -79,7 +83,7 @@ def find_trade(trade_id):
 def get_stats():
 
     total = stats["buy"] + stats["sell"]
-    closed = stats["tp"] + stats["sl"]
+    closed = stats["tp"] + stats["sl"] + stats["be"]
 
     win_rate = 0
 
@@ -92,6 +96,7 @@ def get_stats():
         "sell": stats["sell"],
         "tp": stats["tp"],
         "sl": stats["sl"],
+        "be": stats["be"],
         "win_rate": win_rate,
     }
 
