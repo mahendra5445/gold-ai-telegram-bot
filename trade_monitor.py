@@ -3,7 +3,8 @@ import asyncio
 from data import get_latest_price
 from trade_tracker import get_open_trades, update_trade, find_trade
 
-CHECK_INTERVAL = 60  # seconds
+CHECK_INTERVAL = 600  # seconds (10 min) - kept slow to stay within
+                       # Twelve Data's 800 credits/day free limit
 
 
 async def _notify_all(application, text):

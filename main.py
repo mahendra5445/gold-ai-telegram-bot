@@ -51,6 +51,7 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
+
 async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         candles = get_candles("btc")

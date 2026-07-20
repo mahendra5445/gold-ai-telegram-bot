@@ -5,6 +5,13 @@ TD_URL = "https://api.twelvedata.com/time_series"
 
 
 def _fetch_tf(symbol, interval, label):
+    """
+    Fetch one timeframe from Twelve Data.
+    Raises RuntimeError with the REAL reason on failure instead of
+    silently swallowing it - the old code only printed to server logs,
+    so /gold and /btc just showed a generic "unavailable" message with
+    no way to tell what actually went wrong from Telegram.
+    """
     params = {
         "symbol": symbol,
         "interval": interval,
@@ -27,15 +34,18 @@ def _fetch_tf(symbol, interval, label):
         raise RuntimeError(f"[{label} {interval}] Network/timeout error: {e}")
 
     if "values" not in data:
+        # Twelve Data puts the real reason here, e.g. invalid API key,
+        # rate limit exceeded, invalid symbol, etc.
         code = data.get("code")
         message = data.get("message", str(data))
         raise RuntimeError(f"[{label} {interval}] API error (code {code}): {message}")
 
-    candles = list(reversed(data["values"]))[:-1]
+    candles = list(reversed(data["values"]))[:-1]  # drop current forming candle - only trade closed candles
 
     if len(candles) < 200:
         raise RuntimeError(
-            f"[{label} {interval}] Only got {len(candles)} closed candles (need >=200)."
+            f"[{label} {interval}] Only got {len(candles)} closed candles (need >=200). "
+            f"Check outputsize/plan limits on Twelve Data."
         )
 
     return {
@@ -57,6 +67,13 @@ def get_btc_tf(interval):
 
 
 def get_latest_price(asset="gold"):
+    """
+    Lightweight price check (single latest candle) used by the trade
+    monitor, so we don't burn API quota pulling 200 candles just to
+    check if a target/SL was hit.
+    Returns None (not raise) on failure - the monitor loop just skips
+    this cycle and retries next time, no need to surface an error to a user.
+    """
     symbol = BTC_SYMBOL if asset.lower() == "btc" else GOLD_SYMBOL
     params = {
         "symbol": symbol,
@@ -81,6 +98,11 @@ def get_latest_price(asset="gold"):
 
 
 def get_candles(asset="gold"):
+    """
+    Raises RuntimeError (with the real reason) on failure instead of
+    returning None. Callers in main.py already catch exceptions and
+    show them to the user - this just lets that path actually fire.
+    """
     if asset.lower() == "btc":
         tf1 = get_btc_tf("1min")
         tf5 = get_btc_tf("5min")

@@ -24,6 +24,8 @@ def calculate_trade(signal, price, atr):
     if risk <= 0:
         risk = round(price * 0.001, 2)  # fallback tiny risk to avoid div by 0
 
+    # Reward multiples of risk -> TP1 = 2 ATR, TP2 = 3 ATR (min RR 1:2),
+    # TP3 kept as an optional runner target beyond TP2
     tp1_reward = risk * 2.0
     tp2_reward = risk * 3.0
     tp3_reward = risk * 4.0

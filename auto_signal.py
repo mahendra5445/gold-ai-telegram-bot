@@ -23,14 +23,17 @@ async def _check_asset(application, asset):
         candles.get("open"),
     )
 
+    # NO TRADE होने पर कोई मैसेज नहीं भेजना
     if result["signal"] == "NO TRADE":
         print(f"[AUTO] {asset.upper()} No Trade")
         return
 
+    # Trade Save (tracked for both Gold and BTC now)
     save_trade(result, asset=asset)
 
     message = format_signal(candles, result)
 
+    # Duplicate Signal रोकना (per asset)
     if message == _last_signal.get(asset):
         return
 
@@ -56,6 +59,9 @@ async def _check_asset(application, asset):
 async def auto_signal_job(application):
     while True:
         try:
+            # ==========================
+            # HIGH IMPACT NEWS FILTER (applies to both assets)
+            # ==========================
             if is_high_impact_news():
                 print("[NEWS FILTER] High Impact USD News - Signal Blocked")
                 await asyncio.sleep(300)
@@ -67,4 +73,8 @@ async def auto_signal_job(application):
         except Exception as e:
             print(f"[AUTO ERROR] {e}")
 
-        await asyncio.sleep(300)
+        # हर 30 मिनट बाद नया Signal Check करेगा
+        # (Twelve Data free plan = 800 credits/day. 6 calls/cycle (gold+btc x
+        # 3 timeframes) x 48 cycles/day = 288 calls/day, leaving headroom for
+        # trade_monitor + manual /gold /btc commands)
+        await asyncio.sleep(1800)
