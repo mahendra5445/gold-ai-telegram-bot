@@ -1,60 +1,108 @@
 import requests
-from config import TWELVE_DATA_API_KEY, GOLD_SYMBOL, BTC_SYMBOL
+from config import GOLD_SYMBOL, BTC_SYMBOL
 
-TD_URL = "https://api.twelvedata.com/time_series"
+# Yahoo Finance's unofficial chart endpoint - no API key, no daily credit
+# cap (unlike Twelve Data's free 800/day). It's undocumented/unofficial
+# though, so it can occasionally return gaps or change shape without
+# notice - the error handling below surfaces whatever goes wrong instead
+# of hiding it.
+YF_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+YF_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+}
+
+# 1m data on Yahoo is only available for the last few days, but that's
+# far more than the 200 closed candles we need for any of these intervals.
+_YF_INTERVAL = {"1min": "1m", "5min": "5m", "15min": "15m"}
+_YF_RANGE = {"1min": "5d", "5min": "5d", "15min": "5d"}
 
 
-def _fetch_tf(symbol, interval, label):
+def _fetch_tf(symbol, interval_key, label):
     """
-    Fetch one timeframe from Twelve Data.
-    Raises RuntimeError with the REAL reason on failure instead of
-    silently swallowing it - the old code only printed to server logs,
-    so /gold and /btc just showed a generic "unavailable" message with
-    no way to tell what actually went wrong from Telegram.
+    Fetch one timeframe from Yahoo Finance.
+    Raises RuntimeError with the real reason on failure (same pattern as
+    before) so /gold and /btc show the actual problem instead of a
+    generic "unavailable" message.
     """
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "outputsize": 210,
-        "apikey": TWELVE_DATA_API_KEY,
-    }
-
-    if not TWELVE_DATA_API_KEY:
-        raise RuntimeError(
-            f"[{label} {interval}] TWELVE_DATA_API_KEY is empty/not set on the server."
-        )
+    yf_interval = _YF_INTERVAL[interval_key]
+    yf_range = _YF_RANGE[interval_key]
+    url = YF_URL.format(symbol=symbol)
+    params = {"interval": yf_interval, "range": yf_range}
 
     try:
-        r = requests.get(TD_URL, params=params, timeout=15)
+        r = requests.get(url, params=params, headers=YF_HEADERS, timeout=15)
         r.raise_for_status()
-        data = r.json()
+        payload = r.json()
     except requests.exceptions.HTTPError as e:
-        raise RuntimeError(f"[{label} {interval}] HTTP {e.response.status_code}: {e.response.text[:300]}")
+        raise RuntimeError(f"[{label} {interval_key}] HTTP {e.response.status_code}: {e.response.text[:300]}")
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"[{label} {interval}] Network/timeout error: {e}")
+        raise RuntimeError(f"[{label} {interval_key}] Network/timeout error: {e}")
+    except ValueError as e:
+        raise RuntimeError(f"[{label} {interval_key}] Bad JSON from Yahoo Finance: {e}")
 
-    if "values" not in data:
-        # Twelve Data puts the real reason here, e.g. invalid API key,
-        # rate limit exceeded, invalid symbol, etc.
-        code = data.get("code")
-        message = data.get("message", str(data))
-        raise RuntimeError(f"[{label} {interval}] API error (code {code}): {message}")
+    chart = payload.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(f"[{label} {interval_key}] Yahoo Finance error: {chart['error']}")
 
-    candles = list(reversed(data["values"]))[:-1]  # drop current forming candle - only trade closed candles
+    result = chart.get("result")
+    if not result:
+        raise RuntimeError(f"[{label} {interval_key}] No data returned by Yahoo Finance.")
 
-    if len(candles) < 200:
+    r0 = result[0]
+    timestamps = r0.get("timestamp") or []
+    quote = (r0.get("indicators", {}).get("quote") or [{}])[0]
+
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+
+    # Drop candles with any missing OHLC value - gaps around market
+    # open/close are common in Yahoo's free feed
+    rows = []
+    for i in range(len(timestamps)):
+        o = opens[i] if i < len(opens) else None
+        h = highs[i] if i < len(highs) else None
+        l = lows[i] if i < len(lows) else None
+        c = closes[i] if i < len(closes) else None
+        if None in (o, h, l, c):
+            continue
+        v = volumes[i] if i < len(volumes) and volumes[i] is not None else 0
+        rows.append((o, h, l, c, v))
+
+    if not rows:
+        raise RuntimeError(f"[{label} {interval_key}] Yahoo Finance returned no usable candles.")
+
+    rows = rows[:-1]  # drop the current forming candle - only trade closed candles
+
+    if len(rows) < 200:
         raise RuntimeError(
-            f"[{label} {interval}] Only got {len(candles)} closed candles (need >=200). "
-            f"Check outputsize/plan limits on Twelve Data."
+            f"[{label} {interval_key}] Only got {len(rows)} closed candles (need >=200). "
+            f"Yahoo's free feed can have gaps - try again shortly."
         )
 
+    opens_f = [row[0] for row in rows]
+    highs_f = [row[1] for row in rows]
+    lows_f = [row[2] for row in rows]
+    closes_f = [row[3] for row in rows]
+    volumes_f = [row[4] for row in rows]
+
+    # Spot forex/metals tickers (like XAUUSD=X) often report zero volume
+    # on Yahoo. If it's all zero, pass None instead - that tells the
+    # strategy "no volume data" rather than "zero volume", so it doesn't
+    # divide by zero on VWAP or permanently block every gold signal.
+    if sum(volumes_f) == 0:
+        volumes_f = None
+
     return {
-        "open": [float(x["open"]) for x in candles],
-        "close": [float(x["close"]) for x in candles],
-        "high": [float(x["high"]) for x in candles],
-        "low": [float(x["low"]) for x in candles],
-        "volume": [float(x.get("volume", 1)) for x in candles],
-        "price": float(candles[-1]["close"]),
+        "open": opens_f,
+        "close": closes_f,
+        "high": highs_f,
+        "low": lows_f,
+        "volume": volumes_f,
+        "price": closes_f[-1],
     }
 
 
@@ -68,40 +116,34 @@ def get_btc_tf(interval):
 
 def get_latest_price(asset="gold"):
     """
-    Lightweight price check (single latest candle) used by the trade
-    monitor, so we don't burn API quota pulling 200 candles just to
-    check if a target/SL was hit.
+    Lightweight single-price check used by the trade monitor.
     Returns None (not raise) on failure - the monitor loop just skips
-    this cycle and retries next time, no need to surface an error to a user.
+    this cycle and retries next time.
     """
     symbol = BTC_SYMBOL if asset.lower() == "btc" else GOLD_SYMBOL
-    params = {
-        "symbol": symbol,
-        "interval": "1min",
-        "outputsize": 1,
-        "apikey": TWELVE_DATA_API_KEY,
-    }
+    url = YF_URL.format(symbol=symbol)
+    params = {"interval": "1m", "range": "1d"}
 
     try:
-        r = requests.get(TD_URL, params=params, timeout=15)
+        r = requests.get(url, params=params, headers=YF_HEADERS, timeout=15)
         r.raise_for_status()
-        data = r.json()
+        payload = r.json()
+        result = payload["chart"]["result"][0]
+        closes = result["indicators"]["quote"][0]["close"] or []
+        for c in reversed(closes):
+            if c is not None:
+                return float(c)
+        return None
     except Exception as e:
         print(f"[PRICE ERROR] {asset}: {e}")
         return None
-
-    if "values" not in data:
-        print(f"[PRICE ERROR] {asset}: {data}")
-        return None
-
-    return float(data["values"][0]["close"])
 
 
 def get_candles(asset="gold"):
     """
     Raises RuntimeError (with the real reason) on failure instead of
-    returning None. Callers in main.py already catch exceptions and
-    show them to the user - this just lets that path actually fire.
+    returning None - callers in main.py already catch exceptions and
+    show them to the user.
     """
     if asset.lower() == "btc":
         tf1 = get_btc_tf("1min")
