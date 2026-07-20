@@ -194,6 +194,31 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     atr_ok = bool(atr_ma_value) and atr_value > atr_ma_value
 
     # ==========================
+    # NEW: VOLUME SPIKE FILTER (हल्का/light - mild spike, not a strict one)
+    # Current volume should be at least ~15% above its own recent average.
+    # Same "no data -> pass" fallback as the base volume filter above.
+    # ==========================
+    volume_spike_ok = True
+    if volume and len(volume) >= 20 and sum(volume[-20:]) > 0:
+        spike_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
+        spike_current = volume[-1]
+        volume_spike_ok = spike_avg > 0 and spike_current >= spike_avg * 1.15
+
+    # ==========================
+    # NEW: CANDLE CONFIRMATION
+    # The last CLOSED candle must actually close in the signal's
+    # direction - bullish body (close > open) for BUY, bearish body
+    # (close < open) for SELL. Without open prices we can't confirm,
+    # so pass rather than block.
+    # ==========================
+    candle_bull_ok = True
+    candle_bear_ok = True
+    if open_:
+        last_open, last_close = open_[-1], close[-1]
+        candle_bull_ok = last_close > last_open
+        candle_bear_ok = last_close < last_open
+
+    # ==========================
     # 12. LIQUIDITY FILTER (avoid fake breakouts / raw sweep entries)
     # ==========================
     liquidity_ok = not smc["fake_breakout"]
@@ -227,10 +252,12 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     buy_confirmations = sum([
         ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
         rsi_bull, volume_ok, atr_ok, mtf_bull, liquidity_ok,
+        volume_spike_ok, candle_bull_ok,
     ])
     sell_confirmations = sum([
         ema_bear, adx_ok, st_bear, vwap_bear, macd_bear,
         rsi_bear, volume_ok, atr_ok, mtf_bear, liquidity_ok,
+        volume_spike_ok, candle_bear_ok,
     ])
 
     # ==========================
@@ -239,10 +266,12 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     buy_all_true = all([
         ema_bull, adx_ok, st_bull, vwap_bull, rsi_bull, macd_bull,
         mtf_bull, volume_ok, liquidity_ok, session_ok,
+        volume_spike_ok, candle_bull_ok,
     ])
     sell_all_true = all([
         ema_bear, adx_ok, st_bear, vwap_bear, rsi_bear, macd_bear,
         mtf_bear, volume_ok, liquidity_ok, session_ok,
+        volume_spike_ok, candle_bear_ok,
     ])
 
     reasons = []
@@ -253,7 +282,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         reasons = [
             "EMA Bullish Stack", "ADX Strong", "Bullish Supertrend",
             "Above VWAP", f"RSI Healthy ({rsi_value})", "Bullish MACD",
-            "MTF Bullish Alignment", "Volume OK",
+            "MTF Bullish Alignment", "Volume OK", "Volume Spike",
+            "Bullish Candle Confirmed",
             "No Fake Breakout / Clean Liquidity",
         ]
     elif sell_all_true and sell_score >= MIN_SCORE:
@@ -261,7 +291,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
         reasons = [
             "EMA Bearish Stack", "ADX Strong", "Bearish Supertrend",
             "Below VWAP", f"RSI Healthy ({rsi_value})", "Bearish MACD",
-            "MTF Bearish Alignment", "Volume OK",
+            "MTF Bearish Alignment", "Volume OK", "Volume Spike",
+            "Bearish Candle Confirmed",
             "No Fake Breakout / Clean Liquidity",
         ]
     else:
@@ -270,12 +301,14 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
             "VWAP": vwap_bull, "RSI": rsi_bull, "MACD": macd_bull,
             "MTF": mtf_bull, "Volume": volume_ok, "ATR": atr_ok,
             "Liquidity": liquidity_ok, "Session": session_ok,
+            "Volume Spike": volume_spike_ok, "Candle Confirm": candle_bull_ok,
         }
         checklist_bear = {
             "EMA": ema_bear, "ADX": adx_ok, "Supertrend": st_bear,
             "VWAP": vwap_bear, "RSI": rsi_bear, "MACD": macd_bear,
             "MTF": mtf_bear, "Volume": volume_ok, "ATR": atr_ok,
             "Liquidity": liquidity_ok, "Session": session_ok,
+            "Volume Spike": volume_spike_ok, "Candle Confirm": candle_bear_ok,
         }
         checklist = checklist_bull if buy_score >= sell_score else checklist_bear
         failed = [k for k, v in checklist.items() if not v]
