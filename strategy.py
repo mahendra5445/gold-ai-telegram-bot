@@ -32,7 +32,7 @@ W_ATR = 5
 W_MTF = 15
 W_LIQUIDITY = 10
 
-MIN_SCORE = 80               # V5: nothing fires below this
+MIN_SCORE = 75               # V5: nothing fires below this
 SIGNAL_VALID_MINUTES = 8
 
 STRICT_BULL = {"Strong Bullish", "Bullish"}
@@ -139,7 +139,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     # ==========================
     # 3. ADX FILTER
     # ==========================
-    adx_ok = adx_value >= 25
+    adx_ok = adx_value >= 22
 
     # ==========================
     # 4. SUPERTREND
@@ -156,8 +156,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     # ==========================
     # 6. RSI (widened bands)
     # ==========================
-    rsi_bull = 55 <= rsi_value <= 72
-    rsi_bear = 28 <= rsi_value <= 45
+    rsi_bull = 52 <= rsi_value <= 75
+    rsi_bear = 25 <= rsi_value <= 48
 
     # ==========================
     # 7. MACD (line vs signal + histogram)
@@ -202,7 +202,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     if volume and len(volume) >= 20 and sum(volume[-20:]) > 0:
         spike_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
         spike_current = volume[-1]
-        volume_spike_ok = spike_avg > 0 and spike_current >= spike_avg * 1.15
+        volume_spike_ok = spike_avg > 0 and spike_current >= spike_avg * 1.05
 
     # ==========================
     # NEW: CANDLE CONFIRMATION
@@ -249,6 +249,15 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     buy_score = score_side(True)
     sell_score = score_side(False)
 
+    if pattern_direction == "Bullish":
+        buy_score += 5
+    elif pattern_direction == "Bearish":
+        sell_score += 5
+
+    if session_name in ["London", "New York", "London-New York Overlap"]:
+        buy_score += 3
+        sell_score += 3
+
     buy_confirmations = sum([
         ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
         rsi_bull, volume_ok, atr_ok, mtf_bull, liquidity_ok,
@@ -263,16 +272,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None):
     # ==========================
     # 17. FINAL CONFIRMATION
     # ==========================
-    buy_all_true = all([
-        ema_bull, adx_ok, st_bull, vwap_bull, rsi_bull, macd_bull,
-        mtf_bull, volume_ok, liquidity_ok, session_ok,
-        volume_spike_ok, candle_bull_ok,
-    ])
-    sell_all_true = all([
-        ema_bear, adx_ok, st_bear, vwap_bear, rsi_bear, macd_bear,
-        mtf_bear, volume_ok, liquidity_ok, session_ok,
-        volume_spike_ok, candle_bear_ok,
-    ])
+    buy_all_true = buy_confirmations >= 10
+    sell_all_true = sell_confirmations >= 10
 
     reasons = []
     final_signal = "NO TRADE"
