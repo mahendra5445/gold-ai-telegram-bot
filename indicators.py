@@ -84,6 +84,39 @@ def bollinger_bands(values, period=20, std_dev=2):
     }
 
 
+def bollinger_signal(close, high, low, period=20, std_dev=2):
+    """
+    'Bullish Bounce'  -> last candle poked below the lower band and closed
+                          back inside it (reversal off support)
+    'Bearish Rejection' -> last candle poked above the upper band and closed
+                          back inside it (rejection off resistance)
+    'None' otherwise
+    """
+    bb = bollinger_bands(close, period, std_dev)
+    last_close, last_low, last_high = close[-1], low[-1], high[-1]
+
+    if last_low <= bb["lower"] and last_close > bb["lower"]:
+        return "Bullish Bounce"
+    if last_high >= bb["upper"] and last_close < bb["upper"]:
+        return "Bearish Rejection"
+    return "None"
+
+
+def atr_moving_average(high, low, close, atr_period=14, ma_period=20):
+    """Average of the ATR series itself - used to confirm volatility is
+    expanding (ATR rising above its own average) rather than contracting."""
+    high_s = pd.Series(high)
+    low_s = pd.Series(low)
+    close_s = pd.Series(close)
+    tr = pd.concat([
+        high_s - low_s,
+        (high_s - close_s.shift()).abs(),
+        (low_s - close_s.shift()).abs(),
+    ], axis=1).max(axis=1)
+    atr_series = tr.rolling(atr_period).mean()
+    return round(atr_series.rolling(ma_period).mean().iloc[-1], 2)
+
+
 def supertrend(high, low, close, period=10, multiplier=3):
     """
     Proper stateful Supertrend calculation.
