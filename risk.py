@@ -18,7 +18,7 @@ def calculate_trade(signal, price, atr):
 
     entry = round(price, 2)
 
-    sl_mult = 1.0
+    sl_mult = 1.5
     risk = round(atr * sl_mult, 2)
 
     if risk <= 0:
