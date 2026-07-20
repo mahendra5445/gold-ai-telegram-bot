@@ -85,13 +85,6 @@ def bollinger_bands(values, period=20, std_dev=2):
 
 
 def bollinger_signal(close, high, low, period=20, std_dev=2):
-    """
-    'Bullish Bounce'  -> last candle poked below the lower band and closed
-                          back inside it (reversal off support)
-    'Bearish Rejection' -> last candle poked above the upper band and closed
-                          back inside it (rejection off resistance)
-    'None' otherwise
-    """
     bb = bollinger_bands(close, period, std_dev)
     last_close, last_low, last_high = close[-1], low[-1], high[-1]
 
@@ -103,8 +96,6 @@ def bollinger_signal(close, high, low, period=20, std_dev=2):
 
 
 def atr_moving_average(high, low, close, atr_period=14, ma_period=20):
-    """Average of the ATR series itself - used to confirm volatility is
-    expanding (ATR rising above its own average) rather than contracting."""
     high_s = pd.Series(high)
     low_s = pd.Series(low)
     close_s = pd.Series(close)
@@ -118,18 +109,6 @@ def atr_moving_average(high, low, close, atr_period=14, ma_period=20):
 
 
 def supertrend(high, low, close, period=10, multiplier=3):
-    """
-    Proper stateful Supertrend calculation.
-
-    The old version compared only the latest candle to a single
-    upper/lower band and defaulted to "Bullish" any time price sat
-    between the bands (which is most of the time) - that silently
-    biased every signal toward BUY regardless of real trend.
-
-    This version walks the whole series, flips trend only when price
-    actually closes beyond the trailing band (the real Supertrend
-    rule), and has no directional default.
-    """
     high_s = pd.Series(high)
     low_s = pd.Series(low)
     close_s = pd.Series(close)
@@ -147,7 +126,6 @@ def supertrend(high, low, close, period=10, multiplier=3):
 
     start = atr_series.first_valid_index()
     if start is None or start >= len(close_s) - 1:
-        # Not enough data for a real read - report neutral, not Bullish
         return {"trend": "Bearish", "value": round(close[-1], 2)}
 
     final_upper = basic_upper.copy()
