@@ -18,16 +18,17 @@ def calculate_trade(signal, price, atr):
 
     entry = round(price, 2)
 
-    sl_mult = 1.5
+    sl_mult = 1.0
     risk = round(atr * sl_mult, 2)
 
     if risk <= 0:
         risk = round(price * 0.001, 2)  # fallback tiny risk to avoid div by 0
 
-    # Reward multiples of risk -> guarantees RR >= 1:2
+    # Reward multiples of risk -> TP1 = 2 ATR, TP2 = 3 ATR (min RR 1:2),
+    # TP3 kept as an optional runner target beyond TP2
     tp1_reward = risk * 2.0
     tp2_reward = risk * 3.0
-    tp3_reward = risk * 4.5
+    tp3_reward = risk * 4.0
 
     if signal == "BUY":
         sl = round(entry - risk, 2)
