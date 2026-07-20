@@ -11,7 +11,13 @@ def rsi(values, period=14):
     gain = delta.where(delta > 0, 0).rolling(period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
     rs = gain / loss
-    return round((100 - (100 / (1 + rs))).iloc[-1], 2)
+    value = (100 - (100 / (1 + rs))).iloc[-1]
+    # BUG FIX: bilkul flat market mein gain=0 aur loss=0 → 0/0 = NaN.
+    # NaN aage har comparison ko False karta hai aur Telegram mein
+    # "RSI : nan" dikhta hai. Neutral 50 return karna sahi fallback hai.
+    if pd.isna(value):
+        return 50.0
+    return round(value, 2)
 
 
 def macd(values):

@@ -8,7 +8,9 @@ import logging.handlers
 import os
 
 
-def setup_logging(log_dir: str = "logs") -> logging.Logger:
+def setup_logging(log_dir: str | None = None) -> logging.Logger:
+    # LOG_DIR env se override kar sakte hain (Render persistent disk ke liye)
+    log_dir = log_dir or os.getenv("LOG_DIR", "logs")
     os.makedirs(log_dir, exist_ok=True)
 
     fmt = logging.Formatter(

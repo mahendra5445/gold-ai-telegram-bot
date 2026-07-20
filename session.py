@@ -6,11 +6,13 @@ New York: 13:00 - 21:00 UTC
 Asian   : 00:00 - 08:00 UTC
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def get_current_session():
-    hour = datetime.utcnow().hour
+    # BUG FIX: datetime.utcnow() Python 3.12+ mein deprecated hai
+    # (news.py mein fix ho gaya tha lekin yahan reh gaya tha).
+    hour = datetime.now(timezone.utc).hour
 
     london = 8 <= hour < 16
     new_york = 13 <= hour < 21

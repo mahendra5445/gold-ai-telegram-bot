@@ -1,5 +1,9 @@
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import datetime, timezone
+
 import requests
+
+logger = logging.getLogger(__name__)
 
 NEWS_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
@@ -7,7 +11,14 @@ NEWS_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 def is_high_impact_news():
     try:
         response = requests.get(NEWS_URL, timeout=10)
+        response.raise_for_status()
         events = response.json()
+
+        # BUG FIX: agar feed kabhi error object (dict) ya kuch aur return
+        # kare to neeche wala loop crash karta tha. List na ho to safe skip.
+        if not isinstance(events, list):
+            logger.warning(f"[NEWS] Unexpected feed format: {type(events).__name__}")
+            return False
 
         # BUG FIX: datetime.utcnow() Python 3.12+ mein deprecated hai aur
         # future versions mein remove ho sakta hai. datetime.now(timezone.utc)
@@ -44,5 +55,7 @@ def is_high_impact_news():
         return False
 
     except Exception as e:
-        print(f"[NEWS ERROR] {e}")
+        # BUG FIX: print() rotating log file mein nahi jaata tha —
+        # logger use karna consistent hai (logger_setup.py ke saath).
+        logger.error(f"[NEWS ERROR] {e}")
         return False

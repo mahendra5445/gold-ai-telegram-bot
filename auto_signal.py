@@ -40,7 +40,14 @@ _last_signal_msg:  dict[str, str | None] = {"gold": None, "btc": None}
 
 
 def _in_cooldown(asset: str) -> bool:
-    last = _last_signal_time.get(asset, 0.0)
+    # BUG FIX: pehle default 0.0 tha aur time.monotonic() se compare hota tha.
+    # time.monotonic() ka starting point arbitrary hota hai (Linux pe system
+    # uptime). Agar server/container abhi restart hua ho (uptime < 25 min,
+    # jo Render pe har deploy pe hota hai) to elapsed chhota nikalta tha aur
+    # PEHLA signal hi galat cooldown mein block ho jaata tha.
+    last = _last_signal_time.get(asset)
+    if last is None:
+        return False
     elapsed   = time.monotonic() - last
     remaining = SIGNAL_COOLDOWN_SEC - elapsed
     if remaining > 0:
@@ -93,6 +100,16 @@ async def _check_asset(application, asset: str) -> None:
     # Build message outside lock (pure CPU, no I/O)
     message = format_signal(candles, result)
 
+    # BUG FIX: admins check pehle sirf message bhejne se pehle hota tha —
+    # tab tak trade save ho chuka hota tha aur cooldown set ho jaata tha.
+    # Matlab: koi user registered na ho to bhi trade "OPEN" ban jaata tha,
+    # monitor usko track karta tha, aur agla valid signal cooldown +
+    # open-trade lock mein block ho jaata tha — bina kisi ko kuch bheje.
+    admins = application.bot_data.get("admins", [])
+    if not admins:
+        logger.warning("[AUTO] No registered users — send /start first.")
+        return
+
     # ── 2. Critical section (hold lock only for state checks + write) ─────
     async with trade_lock:
 
@@ -119,11 +136,6 @@ async def _check_asset(application, asset: str) -> None:
         _last_signal_time[asset] = time.monotonic()
 
     # ── 3. Send Telegram messages (outside lock — I/O) ────────────────────
-    admins = application.bot_data.get("admins", [])
-    if not admins:
-        logger.warning("[AUTO] No registered users — send /start first.")
-        return
-
     sent = 0
     for chat_id in admins:
         try:

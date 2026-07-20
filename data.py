@@ -41,6 +41,11 @@ MAX_RETRIES      = 3
 RETRY_BASE_DELAY = 1.0   # seconds; actual delays: 1 s, 2 s (2^0, 2^1)
 
 
+class _YahooGlitch(Exception):
+    """Yahoo ka live quote uske apne recent data se itna alag hai ki
+    feed pe bharosa nahi kiya ja sakta — external source use karo."""
+
+
 # ── single-attempt fetch (no retry) ──────────────────────────────────────
 
 def _fetch_tf_once(symbol: str, interval_key: str, label: str) -> dict:
@@ -194,6 +199,76 @@ def get_btc_tf(interval: str) -> dict:
     return _fetch_tf(BTC_SYMBOL, interval, "BTC")
 
 
+# ── external fallback price sources (jab Yahoo fail/glitch kare) ─────────
+#
+# Gold : 1) Swissquote — asli broker ka forex feed hai, isliye price MT5
+#           ke XAU/USD se sabse zyada match karta hai. Free, no API key.
+#        2) gold-api.com — simple free spot gold API, backup ka backup.
+# BTC  : 1) Binance — sabse liquid exchange, no key needed.
+#        2) Coinbase — backup.
+
+def _swissquote_gold() -> float | None:
+    """Swissquote XAU/USD — bid/ask ka mid price (broker-grade feed)."""
+    url = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
+    r = requests.get(url, headers=YF_HEADERS, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    # Response: list of platforms, har ek mein spreadProfilePrices[].bid/ask
+    for platform in data:
+        profiles = platform.get("spreadProfilePrices") or []
+        for p in profiles:
+            bid, ask = p.get("bid"), p.get("ask")
+            if bid and ask:
+                return round((float(bid) + float(ask)) / 2, 2)
+    return None
+
+
+def _goldapi_gold() -> float | None:
+    """gold-api.com free spot gold price."""
+    r = requests.get("https://api.gold-api.com/price/XAU", timeout=10)
+    r.raise_for_status()
+    price = r.json().get("price")
+    return float(price) if price else None
+
+
+def _binance_btc() -> float | None:
+    r = requests.get(
+        "https://api.binance.com/api/v3/ticker/price",
+        params={"symbol": "BTCUSDT"}, timeout=10,
+    )
+    r.raise_for_status()
+    price = r.json().get("price")
+    return float(price) if price else None
+
+
+def _coinbase_btc() -> float | None:
+    r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=10)
+    r.raise_for_status()
+    amount = r.json().get("data", {}).get("amount")
+    return float(amount) if amount else None
+
+
+def get_external_price(asset: str) -> float | None:
+    """
+    Yahoo ke alawa independent sources se live price.
+    Sources order mein try hote hain; jo pehla kaam kare wahi return.
+    """
+    sources = (
+        [("Swissquote", _swissquote_gold), ("gold-api", _goldapi_gold)]
+        if asset.lower() != "btc"
+        else [("Binance", _binance_btc), ("Coinbase", _coinbase_btc)]
+    )
+    for name, fn in sources:
+        try:
+            price = fn()
+            if price is not None and price > 0:
+                logger.info(f"[PRICE] {asset.upper()} from {name}: {price}")
+                return price
+        except Exception as e:
+            logger.warning(f"[PRICE] {name} failed for {asset}: {e}")
+    return None
+
+
 def get_latest_price(asset: str = "gold") -> float | None:
     """
     Lightweight price check for the trade monitor.
@@ -213,40 +288,75 @@ def get_latest_price(asset: str = "gold") -> float | None:
         r = requests.get(url, params=params, headers=YF_HEADERS, timeout=15)
         r.raise_for_status()
         payload = r.json()
+        result0 = payload["chart"]["result"][0]
         closes  = (
-            payload["chart"]["result"][0]
-            ["indicators"]["quote"][0]
+            result0["indicators"]["quote"][0]
             .get("close") or []
         )
-        # BUG FIX: previously returned the single most recent tick.
-        # Yahoo's free spot-gold feed occasionally reports one bad/stale
-        # tick (a brief spike or a stuck value) that doesn't match a real
-        # broker/MT5 price at all — this alone can fake-trigger an SL
-        # that never really happened. Taking the median of the last few
-        # valid ticks filters out that kind of single-tick glitch while
-        # still tracking the live price closely.
+        # Median of the last few valid 1-minute closes — filters out a
+        # single bad/stale tick that could fake-trigger an SL.
         recent = [float(c) for c in reversed(closes) if c is not None][:5]
-        if not recent:
-            return None
-        recent.sort()
-        return recent[len(recent) // 2]
+        median = None
+        if recent:
+            recent.sort()
+            median = recent[len(recent) // 2]
 
+        # BUG FIX (MT5 price mismatch): 1-minute candle closes kuch minute
+        # purane hote hain, isliye bot ka price MT5 se alag dikh raha tha.
+        # Yahoo ke meta mein "regularMarketPrice" LIVE quote hota hai jo
+        # MT5 ke price se sabse zyada match karta hai. Use prefer karte
+        # hain — lekin median ke against sanity-check ke saath (agar live
+        # quote median se 1%+ door hai to woh glitch hai, median hi lo).
+        live = result0.get("meta", {}).get("regularMarketPrice")
+        if live is not None:
+            live = float(live)
+            if median is None or abs(live - median) / median <= 0.01:
+                return live
+            # Glitch detected: live quote median se 1%+ door hai —
+            # yahan Yahoo pe bharosa nahi, caller external source try karega.
+            raise _YahooGlitch(
+                f"live={live} vs median={median} — divergence too big"
+            )
+
+        return median
+
+    # BUG FIX (Yahoo glitch fallback): pehle glitch pe sirf Yahoo ka hi
+    # median use hota tha — lekin agar Yahoo ka poora feed hi kharab ho
+    # (stuck/stale data) to median bhi galat hota tha. Ab glitch ya full
+    # failure pe independent sources (Swissquote/gold-api ya Binance/
+    # Coinbase) se live price aata hai jo MT5 se match karta hai.
     try:
         price = _single(symbol)
         if price is not None:
             return price
         if fallback:
-            return _single(fallback)
+            price = _single(fallback)
+            if price is not None:
+                return price
+        return get_external_price(asset)
+    except _YahooGlitch as g:
+        logger.warning(f"[PRICE] Yahoo glitch for {asset}: {g} — trying external sources")
+        ext = get_external_price(asset)
+        if ext is not None:
+            return ext
+        # External bhi fail — futures fallback try karo, warna None
+        if fallback:
+            try:
+                return _single(fallback)
+            except Exception:
+                pass
         return None
     except Exception as primary_err:
         if fallback:
             try:
-                return _single(fallback)
+                price = _single(fallback)
+                if price is not None:
+                    return price
             except Exception as fb_err:
                 logger.error(f"[PRICE ERROR] {asset}: spot={primary_err} futures={fb_err}")
-                return None
-        logger.error(f"[PRICE ERROR] {asset}: {primary_err}")
-        return None
+        else:
+            logger.error(f"[PRICE ERROR] {asset}: {primary_err}")
+        return get_external_price(asset)
 
 
 def get_candles(asset: str = "gold") -> dict:

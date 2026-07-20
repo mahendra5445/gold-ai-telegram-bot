@@ -24,6 +24,12 @@ def format_signal(candles, result):
     ai_score_display = min(result['ai_score'], 100)
     confidence_display = min(result['confidence'], 100)
 
+    # BUG FIX: NO TRADE case mein entry/sl/tp None hote hain aur Telegram
+    # message mein literally "Entry : None" dikh raha tha. "-" zyada saaf hai.
+    def _lvl(key):
+        v = result.get(key)
+        return v if v is not None else "-"
+
     return f"""🤖 GOLD AI SCALPER PRO V5.0
 
 💰 Price : {price:.2f}
@@ -59,11 +65,11 @@ def format_signal(candles, result):
 {signal_emoji} SIGNAL : {result['signal']}
 📐 Tier : {result.get('signal_tier', '-')} ({result.get('position_size', '-')} Position Size)
 
-🎯 Entry : {result['entry']}
-🛑 SL : {result['sl']}
-✅ TP1 : {result['tp1']}
-✅ TP2 : {result['tp2']}
-✅ TP3 : {result['tp3']}
+🎯 Entry : {_lvl('entry')}
+🛑 SL : {_lvl('sl')}
+✅ TP1 : {_lvl('tp1')}
+✅ TP2 : {_lvl('tp2')}
+✅ TP3 : {_lvl('tp3')}
 
 ⚖️ RR : {result['risk_reward']}
 

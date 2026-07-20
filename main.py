@@ -18,10 +18,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from auto_signal import auto_signal_job
 from config import BOT_TOKEN
-from data import get_candles
+from data import get_candles, get_latest_price
 from formatter import format_signal
 from logger_setup import setup_logging
 from persistence import load_admins, save_admins
+from risk import calculate_trade
 from strategy import get_signal
 from trade_monitor import trade_monitor_job
 from trade_tracker import get_stats, history_text
@@ -44,14 +45,25 @@ async def post_init(application: Application) -> None:
     else:
         application.bot_data.setdefault("admins", [])
 
-    # Launch background jobs as independent tasks
-    asyncio.create_task(auto_signal_job(application), name="auto_signal")
-    asyncio.create_task(trade_monitor_job(application), name="trade_monitor")
+    # Launch background jobs as independent tasks.
+    # BUG FIX: task references save karna zaroori hai — asyncio sirf weak
+    # reference rakhta hai, aur bina strong reference ke garbage collector
+    # kabhi bhi task ko silently kill kar sakta hai (Python docs ka official
+    # warning hai). Isse auto-signal/monitor kuch ghanton baad chupchaap
+    # band ho sakta tha bina kisi error ke.
+    application.bot_data["_bg_tasks"] = [
+        asyncio.create_task(auto_signal_job(application), name="auto_signal"),
+        asyncio.create_task(trade_monitor_job(application), name="trade_monitor"),
+    ]
     logger.info("[INIT] Background tasks started")
 
 
 async def post_shutdown(application: Application) -> None:
     """Runs after polling has stopped — flush state before the process exits."""
+    # Cancel background loops cleanly so they don't error mid-shutdown
+    for task in application.bot_data.get("_bg_tasks", []):
+        task.cancel()
+
     admins = application.bot_data.get("admins", [])
     save_admins(admins)
     logger.info(f"[SHUTDOWN] Saved {len(admins)} admins. Goodbye.")
@@ -59,8 +71,8 @@ async def post_shutdown(application: Application) -> None:
 
 # ── command helpers ───────────────────────────────────────────────────────
 
-def _build_result(candles: dict) -> dict:
-    return get_signal(
+def _build_result(candles: dict, asset: str = "gold") -> dict:
+    result = get_signal(
         candles["close"],
         candles["high"],
         candles["low"],
@@ -68,6 +80,23 @@ def _build_result(candles: dict) -> dict:
         candles.get("volume"),
         candles.get("open"),
     )
+
+    # BUG FIX (MT5 price mismatch): manual /gold aur /btc commands mein
+    # price last CLOSED 5-minute candle ka close tha — jo message aane
+    # tak 5+ minute purana ho sakta hai, isliye MT5 ke live price se
+    # alag dikhta tha. Auto-signal mein yeh fix pehle se tha; ab manual
+    # commands mein bhi live quote fetch karke price + entry/SL/TP
+    # levels refresh karte hain. Live fetch fail ho to candle-based
+    # levels hi rehte hain (message block nahi hota).
+    live_price = get_latest_price(asset)
+    if live_price is not None:
+        candles["price"] = live_price
+        if result["signal"] in ("BUY", "SELL"):
+            result.update(
+                calculate_trade(result["signal"], live_price, result.get("atr_value", 0))
+            )
+
+    return result
 
 
 # ── command handlers ──────────────────────────────────────────────────────
@@ -109,7 +138,7 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         candles = get_candles("btc")
-        result  = _build_result(candles)
+        result  = _build_result(candles, "btc")
         await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
         traceback.print_exc()
@@ -143,6 +172,17 @@ async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # BUG FIX: /stats aur /history mein try/except nahi tha jabki baaki sab
+    # handlers mein tha — koi bhi exception yahan user ko bina reply ke
+    # chhod deta tha.
+    try:
+        await _stats_impl(update)
+    except Exception as e:
+        logger.error(f"[CMD /stats] {e}")
+        await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
+
+
+async def _stats_impl(update: Update) -> None:
     s = get_stats()
     await update.message.reply_text(
         f"📊 TRADE STATISTICS\n\n"
@@ -157,7 +197,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(history_text())
+    try:
+        await update.message.reply_text(history_text())
+    except Exception as e:
+        logger.error(f"[CMD /history] {e}")
+        await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
 # ── entry point ───────────────────────────────────────────────────────────

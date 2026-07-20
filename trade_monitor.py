@@ -76,18 +76,24 @@ def _compute_events(trade: dict, price: float) -> list[str]:
 # ── per-trade check ───────────────────────────────────────────────────────
 
 async def _check_trade(application, trade: dict, price: float) -> None:
-    events = _compute_events(trade, price)
-    if not events:
-        return
-
     notifications: list[str] = []
     trade_closed = False
 
     # ── Critical section: mutate state atomically ─────────────────────────
     async with trade_lock:
         # Re-check status inside lock (another coroutine may have closed
-        # this trade between _compute_events and acquiring the lock)
+        # this trade between the price fetch and acquiring the lock)
         if trade["status"] != "OPEN":
+            return
+
+        # BUG FIX: events pehle lock ke BAHAR compute hote the — us waqt ka
+        # trade state (hit_tp1, sl) purana ho sakta tha. Example: TP1 abhi
+        # hit hua aur SL entry pe move hua, lekin purane state se compute
+        # kiya "sl" event ab bhi purane SL pe fire karke trade ko galat
+        # "SL Hit" mark kar deta. Ab events lock ke andar fresh state se
+        # compute hote hain.
+        events = _compute_events(trade, price)
+        if not events:
             return
 
         for level in events:

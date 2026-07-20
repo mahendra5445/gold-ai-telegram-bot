@@ -13,7 +13,13 @@ import os
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = "data"
+# BUG FIX (Render data loss): Render/Heroku jaise platforms ka filesystem
+# EPHEMERAL hota hai — har deploy/restart pe local files delete ho jaati
+# hain, matlab trades.json aur admins.json har baar reset ho rahe the
+# (open trades ka crash-recovery aur admin list kaam nahi kar rahe the).
+# Ab DATA_DIR env variable se persistent disk ka path set kar sakte hain
+# (render.yaml dekho). Env na ho to local "data" folder hi use hota hai.
+DATA_DIR = os.getenv("DATA_DIR", "data")
 TRADES_FILE  = os.path.join(DATA_DIR, "trades.json")
 ADMINS_FILE  = os.path.join(DATA_DIR, "admins.json")
 
