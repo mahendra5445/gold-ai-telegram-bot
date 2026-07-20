@@ -44,9 +44,6 @@ def build_result(candles):
 async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         candles = get_candles()
-        if candles is None:
-            await update.message.reply_text("❌ Market data unavailable.")
-            return
         result = build_result(candles)
         await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
@@ -54,13 +51,9 @@ async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
-
 async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         candles = get_candles("btc")
-        if candles is None:
-            await update.message.reply_text("❌ BTC market data unavailable.")
-            return
         result = build_result(candles)
         await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
@@ -74,9 +67,6 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         candles = get_candles()
-        if candles is None:
-            await update.message.reply_text("❌ Market data unavailable.")
-            return
         result = build_result(candles)
         await update.message.reply_text(
             f"📊 1M Trend : {result['trend_1m']}\n"
