@@ -1,36 +1,65 @@
+"""
+Bot entry point.
+
+Fixes applied:
+ #13  Graceful restart        — Application.post_shutdown saves admins + logs exit.
+ #14  Persistent admin list   — admins loaded from disk at startup; saved on every
+                                /start and on shutdown.
+ #17  Proper logging          — setup_logging() configures rotating file + console
+                                before anything else runs.
+"""
+
 import asyncio
+import logging
 import traceback
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from auto_signal import auto_signal_job
 from config import BOT_TOKEN
 from data import get_candles
-from strategy import get_signal
 from formatter import format_signal
-from auto_signal import auto_signal_job
+from logger_setup import setup_logging
+from persistence import load_admins, save_admins
+from strategy import get_signal
 from trade_monitor import trade_monitor_job
 from trade_tracker import get_stats, history_text
 
-
-async def post_init(application):
-    asyncio.create_task(auto_signal_job(application))
-    asyncio.create_task(trade_monitor_job(application))
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    admins = context.application.bot_data.setdefault("admins", [])
-    if chat_id not in admins:
-        admins.append(chat_id)
-    await update.message.reply_text(
-        "🤖 GOLD AI SCALPER PRO V5.0\n\n"
-        "✅ Bot Online\n"
-        "📡 AI Signal Engine Active\n\n"
-        "Commands:\n/gold\n/btc\n/signal\n/trend\n/stats\n/history"
-    )
+# ── logging must be configured before any module uses it ─────────────────
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
-def build_result(candles):
+# ── lifecycle callbacks ───────────────────────────────────────────────────
+
+async def post_init(application: Application) -> None:
+    """Runs after the bot is fully initialised but before polling starts."""
+
+    # Restore persisted admin list so users don't need to /start again
+    saved_admins = load_admins()
+    if saved_admins:
+        application.bot_data["admins"] = saved_admins
+        logger.info(f"[INIT] Restored {len(saved_admins)} admins from disk")
+    else:
+        application.bot_data.setdefault("admins", [])
+
+    # Launch background jobs as independent tasks
+    asyncio.create_task(auto_signal_job(application), name="auto_signal")
+    asyncio.create_task(trade_monitor_job(application), name="trade_monitor")
+    logger.info("[INIT] Background tasks started")
+
+
+async def post_shutdown(application: Application) -> None:
+    """Runs after polling has stopped — flush state before the process exits."""
+    admins = application.bot_data.get("admins", [])
+    save_admins(admins)
+    logger.info(f"[SHUTDOWN] Saved {len(admins)} admins. Goodbye.")
+
+
+# ── command helpers ───────────────────────────────────────────────────────
+
+def _build_result(candles: dict) -> dict:
     return get_signal(
         candles["close"],
         candles["high"],
@@ -41,79 +70,121 @@ def build_result(candles):
     )
 
 
-async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ── command handlers ──────────────────────────────────────────────────────
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    admins  = context.application.bot_data.setdefault("admins", [])
+
+    if chat_id not in admins:
+        admins.append(chat_id)
+        save_admins(admins)   # persist immediately
+        logger.info(f"[ADMIN] Registered new user {chat_id} ({len(admins)} total)")
+
+    await update.message.reply_text(
+        "🤖 GOLD AI SCALPER PRO V5.0\n\n"
+        "✅ Bot Online\n"
+        "📡 AI Signal Engine Active\n\n"
+        "Commands:\n"
+        "/gold    — Manual gold signal\n"
+        "/btc     — Manual BTC signal\n"
+        "/signal  — Same as /gold\n"
+        "/trend   — Trend summary\n"
+        "/stats   — Trade statistics\n"
+        "/history — Last 10 trades"
+    )
+
+
+async def gold(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         candles = get_candles()
-        result = build_result(candles)
+        result  = _build_result(candles)
         await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
         traceback.print_exc()
+        logger.error(f"[CMD /gold] {e}")
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
-
-async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def btc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         candles = get_candles("btc")
-        result = build_result(candles)
+        result  = _build_result(candles)
         await update.message.reply_text(format_signal(candles, result))
     except Exception as e:
         traceback.print_exc()
+        logger.error(f"[CMD /btc] {e}")
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
-async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await gold(update, context)
 
 
-async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         candles = get_candles()
-        result = build_result(candles)
+        result  = _build_result(candles)
         await update.message.reply_text(
-            f"📊 1M Trend : {result['trend_1m']}\n"
-            f"📊 5M Trend : {result['trend_5m']}\n"
-            f"📊 15M Trend : {result['trend_15m']}\n\n"
-            f"📈 Trend Strength : {result['trend_strength']}\n"
-            f"📢 Signal : {result['signal']}\n"
-            f"🤖 AI Score : {result['ai_score']}\n"
-            f"🎖 Grade : {result['grade']}\n"
-            f"🔥 Confidence : {result['confidence']}%\n"
-            f"📍 Market : {result['market_status']}"
+            f"📊 1M Trend      : {result['trend_1m']}\n"
+            f"📊 5M Trend      : {result['trend_5m']}\n"
+            f"📊 15M Trend     : {result['trend_15m']}\n\n"
+            f"📈 Trend Strength: {result['trend_strength']}\n"
+            f"📢 Signal        : {result['signal']}\n"
+            f"🤖 AI Score      : {result['ai_score']}\n"
+            f"🎖 Grade         : {result['grade']}\n"
+            f"🔥 Confidence    : {result['confidence']}%\n"
+            f"📍 Market        : {result['market_status']}"
         )
     except Exception as e:
         traceback.print_exc()
+        logger.error(f"[CMD /trend] {e}")
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     s = get_stats()
     await update.message.reply_text(
         f"📊 TRADE STATISTICS\n\n"
         f"📈 Total Signals : {s['total']}\n"
-        f"🟢 BUY Signals : {s['buy']}\n"
-        f"🔴 SELL Signals : {s['sell']}\n"
-        f"🎯 TP Hit : {s['tp']}\n"
-        f"⚪ Breakeven : {s['be']}\n"
-        f"🛑 SL Hit : {s['sl']}\n"
-        f"🏆 Win Rate : {s['win_rate']}%"
+        f"🟢 BUY Signals   : {s['buy']}\n"
+        f"🔴 SELL Signals  : {s['sell']}\n"
+        f"🎯 TP Hit        : {s['tp']}\n"
+        f"⚪ Breakeven     : {s['be']}\n"
+        f"🛑 SL Hit        : {s['sl']}\n"
+        f"🏆 Win Rate      : {s['win_rate']}%"
     )
 
 
-async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(history_text())
 
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("gold", gold))
-    app.add_handler(CommandHandler("btc", btc))
-    app.add_handler(CommandHandler("signal", signal))
-    app.add_handler(CommandHandler("trend", trend))
-    app.add_handler(CommandHandler("stats", stats))
+# ── entry point ───────────────────────────────────────────────────────────
+
+def main() -> None:
+    if not BOT_TOKEN:
+        logger.critical("BOT_TOKEN environment variable is not set. Exiting.")
+        return
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(CommandHandler("gold",    gold))
+    app.add_handler(CommandHandler("btc",     btc))
+    app.add_handler(CommandHandler("signal",  signal))
+    app.add_handler(CommandHandler("trend",   trend))
+    app.add_handler(CommandHandler("stats",   stats))
     app.add_handler(CommandHandler("history", history))
-    print("🚀 Gold AI Scalper Pro V5.0 Started...")
-    app.run_polling()
+
+    logger.info("🚀 Gold AI Scalper Pro V5.0 starting…")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

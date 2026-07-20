@@ -53,7 +53,11 @@ def adx(high, low, close, period=14):
     atrv = tr.rolling(period).mean()
     plus = 100 * plus_dm.rolling(period).mean() / atrv
     minus = 100 * minus_dm.rolling(period).mean() / atrv
-    dx = ((plus - minus).abs() / (plus + minus)) * 100
+    # BUG FIX: jab plus + minus = 0 ho (price bilkul flat ho) to division
+    # by zero se NaN aata tha. replace(0, NaN) se us row ka dx=NaN hoga
+    # jo rolling mean mein safely ignore ho jaata hai.
+    denom = (plus + minus).replace(0, float("nan"))
+    dx = ((plus - minus).abs() / denom) * 100
     return round(dx.rolling(period).mean().iloc[-1], 2)
 
 
@@ -147,8 +151,12 @@ def supertrend(high, low, close, period=10, multiplier=3):
 
     start = atr_series.first_valid_index()
     if start is None or start >= len(close_s) - 1:
-        # Not enough data for a real read - report neutral, not Bullish
-        return {"trend": "Bearish", "value": round(close[-1], 2)}
+        # BUG FIX: pehle yahan "Bearish" return hota tha jab data kam hota
+        # tha - comment khud keh raha tha "neutral, not Bullish" lekin code
+        # Bearish bhej raha tha, jo SELL ki taraf bias deta tha.
+        # "Neutral" return karne se strategy mein st_bull aur st_bear dono
+        # False rahenge - na BUY ki taraf jhukao, na SELL ki taraf.
+        return {"trend": "Neutral", "value": round(close[-1], 2)}
 
     final_upper = basic_upper.copy()
     final_lower = basic_lower.copy()

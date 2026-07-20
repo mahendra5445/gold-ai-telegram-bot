@@ -9,7 +9,11 @@ def is_high_impact_news():
         response = requests.get(NEWS_URL, timeout=10)
         events = response.json()
 
-        now = datetime.utcnow()
+        # BUG FIX: datetime.utcnow() Python 3.12+ mein deprecated hai aur
+        # future versions mein remove ho sakta hai. datetime.now(timezone.utc)
+        # use karna sahi tarika hai. tzinfo strip karke naive UTC datetime
+        # banate hain taaki event_time ke saath comparison consistent rahe.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         for event in events:
 
@@ -28,12 +32,8 @@ def is_high_impact_news():
                 date_str.replace("Z", "+00:00")
             )
 
-            # BUG FIX: the feed's timestamps carry a real UTC offset (not
-            # always Z/UTC) - naively stripping tzinfo without converting
-            # first compared local wall-clock time against UTC "now",
-            # which was off by several hours for any non-UTC event and
-            # could make the news filter fire at the wrong time (or miss
-            # the window entirely).
+            # Feed ke timestamps mein real UTC offset hota hai (sirf Z nahi)
+            # - tzinfo convert karke naive UTC mein laate hain.
             if event_time.tzinfo is not None:
                 event_time = event_time.astimezone(timezone.utc).replace(tzinfo=None)
 
