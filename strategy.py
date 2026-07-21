@@ -21,18 +21,25 @@ from session import get_current_session
 # ==========================
 # GOLD AI SCALPER PRO V5 - SCORE WEIGHTS (total = 100)
 # ==========================
-W_EMA = 15
-W_ADX = 10
-W_SUPERTREND = 15
-W_VWAP = 10
-W_MACD = 10
-W_RSI = 10
-W_VOLUME = 10
-W_ATR = 5
-W_MTF = 15
-W_LIQUIDITY = 10
+# BUG FIX: these previously summed to 110 (15+10+15+10+10+10+10+5+15+10),
+# not 100 as the comment claimed. buy_score/sell_score were then clamped
+# with min(score, 100), so any setup scoring 90-110 raw all displayed as
+# a flat "100/100" — real quality differences between a 90-point and a
+# 110-point setup were invisible, and grade thresholds (A+ >=90) were
+# effectively easier to hit than the 0-100 scale implied. Rebalanced
+# proportionally so the weights actually sum to 100.
+W_EMA = 14
+W_ADX = 9
+W_SUPERTREND = 14
+W_VWAP = 9
+W_MACD = 9
+W_RSI = 9
+W_VOLUME = 9
+W_ATR = 4
+W_MTF = 14
+W_LIQUIDITY = 9
 
-MIN_SCORE = 68                # relaxed from 75 -> more setups qualify, still a solid bar
+MIN_SCORE = 62                 # rescaled from 68/110 to keep the same relative bar on the corrected 0-100 scale
 MIN_CONFIRMATIONS = 8         # relaxed from 9 -> anything below 10 still gets tagged
                                # "Reduced Risk" (see position_size below) so quality
                                # is still visible even as more trades pass through
@@ -227,7 +234,16 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None, decimals=2
     # ==========================
     # 12. LIQUIDITY FILTER (avoid fake breakouts / raw sweep entries)
     # ==========================
-    liquidity_ok = not smc["fake_breakout"]
+    # BUG FIX: this used to be just `not smc["fake_breakout"]`.
+    # fake_breakout only fires in one narrow combo (liquidity sweep AND a
+    # BOS in the opposite direction that then closes back inside range),
+    # so in practice this check passed almost every single time and the
+    # "No Fake Breakout / Clean Liquidity" confirmation wasn't really
+    # filtering anything. Added a second condition: a liquidity sweep with
+    # NO break-of-structure follow-through at all (classic stop-hunt
+    # pattern - price grabs stops beyond the recent high/low then just
+    # sits there with no real structural break) also fails the check.
+    liquidity_ok = not smc["fake_breakout"] and not (smc["liquidity"] and not smc["bos"])
 
     # ==========================
     # 14. SESSION FILTER - info only now, not a hard gate
@@ -268,10 +284,23 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None, decimals=2
         buy_score += 3
         sell_score += 3
 
+    # BUG FIX (SL hit too early / low-quality Asian-session signals):
+    # session_ok above is info-only, so the Asian/Off-Hours session no
+    # longer blocks trades - but it never penalized them either, meaning a
+    # thin-liquidity setup could score exactly the same as one during
+    # London/NY. This soft penalty keeps low-liquidity setups tradeable
+    # (matches the original intent of relaxing the hard session gate) but
+    # requires them to clear a higher bar, and it's paired with the wider
+    # SL that risk.py now applies for the same session_active=False case.
+    if not session_active:
+        buy_score -= 8
+        sell_score -= 8
+
     # Scores are weighted to sum to 100 but bonuses (pattern +5, session +3)
-    # can push them over - always cap at 100.
-    buy_score = min(buy_score, 100)
-    sell_score = min(sell_score, 100)
+    # can push them over - always cap at 100 (and floor at 0, since the
+    # new low-liquidity penalty above can now push a very weak score negative).
+    buy_score = max(0, min(buy_score, 100))
+    sell_score = max(0, min(sell_score, 100))
 
     buy_confirmations = sum([
         ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
@@ -417,7 +446,9 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None, decimals=2
 
     market_status = "Active" if session_active else "Low Liquidity"
 
-    trade_levels = calculate_trade(final_signal, price, atr_value, decimals=decimals)
+    trade_levels = calculate_trade(
+        final_signal, price, atr_value, decimals=decimals, session_active=session_active
+    )
 
     return {
         "signal": final_signal,

@@ -1,7 +1,7 @@
 import math
 
 
-def calculate_trade(signal, price, atr, decimals=2):
+def calculate_trade(signal, price, atr, decimals=2, session_active=True):
     """
     Smart Risk Management
     - ATR based Stop Loss
@@ -11,6 +11,9 @@ def calculate_trade(signal, price, atr, decimals=2):
     `decimals` controls rounding precision — gold/BTC/oil use 2, but a pair
     like EUR/USD needs 4-5 decimals or a 0.01 rounding would erase ~100 pips
     of precision. Defaults to 2 for backward compatibility with old callers.
+
+    `session_active` — True for London/New York, False for Asian/Off-Hours
+    (see session.py). Passed through so the SL can be widened below.
     """
 
     if signal not in ["BUY", "SELL"]:
@@ -30,7 +33,18 @@ def calculate_trade(signal, price, atr, decimals=2):
     # getting stopped out almost immediately even when direction was
     # right (this is why SL Hit was far higher than TP Hit / win rate
     # was ~0%). Widened to 2.5x ATR — a more realistic scalping stop.
-    sl_mult = 2.5
+    #
+    # BUG FIX (SL hitting too early during Asian/low-liquidity session):
+    # strategy.py stopped hard-blocking Asian-session trades (session_ok is
+    # now info-only), but this function still used the exact same SL
+    # distance for every session. Asian/off-hours session = thinner order
+    # books = wider real broker spread + more noisy wicks relative to the
+    # same ATR reading, so a stop sized for London/NY liquidity gets tagged
+    # by spread/noise alone, not a genuine move against you. When
+    # session_active is False we widen both the ATR multiplier and the
+    # minimum floor by 40%.
+    session_factor = 1.0 if session_active else 1.4
+    sl_mult = 2.5 * session_factor
 
     # atr can come through as NaN if upstream data had a gap - guard that
     # explicitly since `nan <= 0` is False in Python, so the old
@@ -45,8 +59,9 @@ def calculate_trade(signal, price, atr, decimals=2):
     # kicked in when risk was <= 0. In quiet markets ATR could still
     # produce a small positive risk (e.g. ~$1) that slipped straight
     # through spread/noise and got stopped out instantly. Now we always
-    # enforce a floor of 0.15% of price, regardless of how small ATR is.
-    min_risk = round(price * 0.0015, decimals)
+    # enforce a floor of 0.15% of price (0.21% during Asian/off-hours),
+    # regardless of how small ATR is.
+    min_risk = round(price * 0.0015 * session_factor, decimals)
     if risk < min_risk:
         risk = min_risk
 

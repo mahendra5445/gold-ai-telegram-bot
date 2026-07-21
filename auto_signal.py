@@ -69,7 +69,15 @@ async def _check_asset(application, asset: str) -> None:
     label    = cfg["label"]
 
     # ── 1. Fetch data (outside lock — network I/O can be slow) ───────────
-    candles = get_candles(asset)
+    # BUG FIX (event-loop block): get_candles() does blocking requests.get()
+    # calls with up to 3 retries and time.sleep(1)/time.sleep(2) between
+    # them, across 3 timeframes. Calling it directly here ran that
+    # synchronously ON the asyncio event loop — so a slow/failing Yahoo
+    # response froze the ENTIRE bot (every Telegram command, trade_monitor's
+    # SL/TP checks, watchdog heartbeat) for as long as the retries took.
+    # asyncio.to_thread() runs it on a worker thread instead, so the event
+    # loop stays responsive to everything else while this waits on network I/O.
+    candles = await asyncio.to_thread(get_candles, asset)
     result  = get_signal(
         candles["close"],
         candles["high"],
@@ -95,10 +103,11 @@ async def _check_asset(application, asset: str) -> None:
     # what you'd actually see on MT5 at signal time. If the live fetch
     # fails for any reason we just keep the candle-based levels instead
     # of blocking the signal.
-    live_price = get_latest_price(asset)
+    live_price = await asyncio.to_thread(get_latest_price, asset)
     if live_price is not None:
         fresh_levels = calculate_trade(
-            result["signal"], live_price, result.get("atr_value", 0), decimals=decimals
+            result["signal"], live_price, result.get("atr_value", 0),
+            decimals=decimals, session_active=result.get("session_active", True),
         )
         result.update(fresh_levels)
         candles["price"] = live_price
@@ -160,8 +169,12 @@ async def auto_signal_job(application) -> None:
     heartbeat["last_cycle"] = time.time()   # baseline so watchdog doesn't false-alarm at boot
     while True:
         # News filter
+        # BUG FIX (event-loop block, missed in first pass): is_high_impact_news()
+        # does a blocking requests.get() too — same issue as get_candles/
+        # get_latest_price above. Wrapped in asyncio.to_thread() so a slow
+        # or hanging news-feed request can't freeze the whole bot.
         try:
-            if is_high_impact_news():
+            if await asyncio.to_thread(is_high_impact_news):
                 logger.info("[NEWS FILTER] High-impact USD news — signals paused 5 min")
                 # Still stamp the heartbeat — this is an intentional pause,
                 # not a stuck loop. A news window can span up to ~60 minutes

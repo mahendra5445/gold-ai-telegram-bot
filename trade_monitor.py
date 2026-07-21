@@ -38,6 +38,14 @@ async def _notify_all(application, text: str) -> None:
             logger.error(f"[MONITOR SEND ERROR] chat_id={chat_id}: {e}")
 
 
+SL_BUFFER_PCT = 0.0003   # 0.03% of price — small margin beyond SL required
+                          # before a close is confirmed, so a single noisy
+                          # Yahoo tick (get_latest_price already median-filters
+                          # 1-min closes, but a real live-quote glitch can
+                          # still slip through) can't trigger a false SL
+                          # close on a price that immediately reverts.
+
+
 def _compute_events(trade: dict, price: float) -> list[str]:
     """
     Returns a list of event strings that have just been triggered at
@@ -49,9 +57,17 @@ def _compute_events(trade: dict, price: float) -> list[str]:
     events: list[str] = []
 
     # ── Stop Loss / Breakeven ─────────────────────────────────────────────
+    # BUG FIX: SL used to trigger on the exact touch of the level, which
+    # meant a single spiky/glitchy price tick (Yahoo spot data is noisy
+    # enough that data.py has its own _YahooGlitch handling for it) could
+    # close a trade even if price immediately came back. Requiring price to
+    # clear the SL by a small buffer filters that out without meaningfully
+    # widening the real stop (it's ~0.03% of price, far smaller than the
+    # ATR-based SL distance itself).
+    sl_buffer = trade["sl"] * SL_BUFFER_PCT
     sl_hit = (
-        (is_buy     and price <= trade["sl"]) or
-        (not is_buy and price >= trade["sl"])
+        (is_buy     and price <= trade["sl"] - sl_buffer) or
+        (not is_buy and price >= trade["sl"] + sl_buffer)
     )
     if sl_hit:
         # If TP1 was already hit, SL at entry = breakeven close
@@ -175,10 +191,30 @@ async def trade_monitor_job(application) -> None:
 
             if open_trades:
                 # Fetch prices for all needed assets in one batch
-                needed_assets = {t["asset"] for t in open_trades}
+                # BUG FIX (event-loop block, missed in first pass): same
+                # blocking-requests.get() issue as data.get_candles() — and
+                # this one runs every CHECK_INTERVAL (2 min), more often
+                # than any other job, so its freeze impact was actually the
+                # worst of the three. asyncio.gather + to_thread runs all
+                # needed price fetches concurrently on worker threads
+                # instead of serially blocking the event loop.
+                asset_list = list({t["asset"] for t in open_trades})
+                # return_exceptions=True: without this, one asset raising
+                # (e.g. an unexpected error inside get_latest_price) would
+                # abort the whole gather() and skip SL/TP monitoring for
+                # every OTHER open trade this cycle too, not just the
+                # failing asset.
+                fetched = await asyncio.gather(
+                    *(asyncio.to_thread(get_latest_price, a) for a in asset_list),
+                    return_exceptions=True,
+                )
                 prices: dict[str, float | None] = {}
-                for asset in needed_assets:
-                    prices[asset] = get_latest_price(asset)
+                for a, result in zip(asset_list, fetched):
+                    if isinstance(result, Exception):
+                        logger.error(f"[MONITOR] Price fetch failed for {a.upper()}: {result}")
+                        prices[a] = None
+                    else:
+                        prices[a] = result
 
                 # Iterate over a snapshot copy so mutations don't affect the loop
                 for trade in list(open_trades):

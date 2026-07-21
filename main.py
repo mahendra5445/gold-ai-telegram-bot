@@ -75,7 +75,7 @@ async def post_shutdown(application: Application) -> None:
 
 # ── command helpers ───────────────────────────────────────────────────────
 
-def _build_result(candles: dict, asset: str = "gold") -> dict:
+async def _build_result(candles: dict, asset: str = "gold") -> dict:
     decimals = ASSETS[asset.lower()]["decimals"]
     result = get_signal(
         candles["close"],
@@ -94,13 +94,20 @@ def _build_result(candles: dict, asset: str = "gold") -> dict:
     # commands mein bhi live quote fetch karke price + entry/SL/TP
     # levels refresh karte hain. Live fetch fail ho to candle-based
     # levels hi rehte hain (message block nahi hota).
-    live_price = get_latest_price(asset)
+    #
+    # BUG FIX (event-loop block): get_latest_price() is a blocking
+    # requests.get() call — running it directly here (a sync function
+    # called from an async handler) blocked the whole bot on every single
+    # /gold, /btc, /trend etc. command. asyncio.to_thread() moves it off
+    # the event loop.
+    live_price = await asyncio.to_thread(get_latest_price, asset)
     if live_price is not None:
         candles["price"] = live_price
         if result["signal"] in ("BUY", "SELL"):
             result.update(
                 calculate_trade(
-                    result["signal"], live_price, result.get("atr_value", 0), decimals=decimals
+                    result["signal"], live_price, result.get("atr_value", 0),
+                    decimals=decimals, session_active=result.get("session_active", True),
                 )
             )
 
@@ -145,8 +152,8 @@ def _make_asset_handler(asset: str):
 
     async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            candles = get_candles(asset)
-            result  = _build_result(candles, asset)
+            candles = await asyncio.to_thread(get_candles, asset)
+            result  = await _build_result(candles, asset)
             await update.message.reply_text(
                 format_signal(candles, result, decimals=decimals, label=label)
             )
@@ -170,8 +177,8 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        candles = get_candles()
-        result  = _build_result(candles)
+        candles = await asyncio.to_thread(get_candles)
+        result  = await _build_result(candles)
         await update.message.reply_text(
             f"📊 1M Trend      : {result['trend_1m']}\n"
             f"📊 5M Trend      : {result['trend_5m']}\n"
