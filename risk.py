@@ -30,7 +30,7 @@ def calculate_trade(signal, price, atr, decimals=2):
     # getting stopped out almost immediately even when direction was
     # right (this is why SL Hit was far higher than TP Hit / win rate
     # was ~0%). Widened to 2.5x ATR — a more realistic scalping stop.
-    sl_mult = 2.0
+    sl_mult = 2.5
 
     # atr can come through as NaN if upstream data had a gap - guard that
     # explicitly since `nan <= 0` is False in Python, so the old
