@@ -9,8 +9,8 @@ from smart_money import analyze_smart_money
 from patterns import detect_pattern
 from session import get_current_session
 from market_regime import detect_regime
-from config import (REQUIRE_TREND_REGIME, REQUIRE_BOS, REQUIRE_ORDER_BLOCK,
-                    REQUIRE_FVG, REQUIRE_HTF_ALIGN, MIN_RR)
+from config import (REQUIRE_BOS, REQUIRE_ORDER_BLOCK, REQUIRE_FVG,
+                    REQUIRE_HTF_ALIGN, MIN_RR, REGIME_MODE)
 
 # ==========================================================================
 # SCORE WEIGHTS
@@ -294,8 +294,12 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     # ======================================================================
     quality_fails = []
 
-    if REQUIRE_TREND_REGIME and not regime["trend_ok"]:
-        quality_fails.append(f"Regime: {regime['regime']}")
+    if REGIME_MODE == "strict":
+        if regime["regime"] != "Trending":
+            quality_fails.append(f"Regime: {regime['regime']} (strict mode)")
+    elif REGIME_MODE == "not_range":
+        if not regime["trend_ok"]:
+            quality_fails.append(f"Regime: {regime['regime']}")
 
     if REQUIRE_HTF_ALIGN:
         htf_bull = trend15 in bullish_trends

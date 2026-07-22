@@ -88,14 +88,34 @@ SCALE_OUT = (1.00,)
 # Trade expiry -- itne minutes baad open trade forcibly close.
 # Pehle koi expiry thi hi nahi: ek stuck trade us asset ko hamesha ke liye
 # block kar deta tha (has_open_trade).
-# Single-target mein lambe runner ka intezaar nahi karna, isliye 240 -> 120.
-TRADE_EXPIRY_MINUTES = 120
+# 120 -> 480 (8 ghante).
+#
+# WAJAH (test se): 120 min pe 61.7% trades TP ya SL kisi tak nahi pahunchte
+# the -- bas time-out ho jaate the. Ye geometry ka masla hai: SL 1R door hai
+# aur TP 2.5R, to SL hamesha pehle resolve hota hai. Chhota window jeetne
+# wale trades ko zyada kaatta hai, haarne walon ko kam.
+#
+# Test se resolved trades mein TP ka hissa:
+#     2 hr  -> 16.7%
+#     8 hr  -> 33.3%    <- ab yahan
+#    24 hr  -> 35.9%    (aur faayda kam, par asset poora din block)
+#
+# 8 ghante pe expired trades 61.7% se girkar ~14% reh jaate hain, aur asset
+# ek session ke andar free bhi ho jaata hai.
+TRADE_EXPIRY_MINUTES = 480
 
 # ==========================================================================
 # CIRCUIT BREAKER -- ek kharab din ko rokne ke liye
 # ==========================================================================
-MAX_TRADES_PER_DAY = 6          # per asset
-MAX_DAILY_LOSS_R = -4.0         # is R pe pahunchne ke baad us din naye signals band
+# NOTE: 8-ghante ki expiry + one-open-trade-per-asset lock ki wajah se
+# practically 2-3 trades hi aate hain per asset per day. Isliye ye dono
+# numbers us hisaab se set kiye hain -- warna trigger hi nahi hote.
+MAX_TRADES_PER_DAY = 4          # per asset (safety cap, normally 2-3 aayenge)
+
+# Pehle -4.0R tha, jo 3 trades ke din mein KABHI trigger nahi hota
+# (3 x -1R = -3R max). Ab -2.5R -- yaani lagbhag 2.5 full stop-outs ke baad
+# us asset pe us din ke liye signals band.
+MAX_DAILY_LOSS_R = -2.5
 
 
 # ==========================================================================
@@ -127,7 +147,15 @@ MAX_SPREAD_MULT = 2.0        # config spread se itne guna se zyada = skip
 # Ek-ek karke on karein aur backtest se dekhein ki expectancy behtar hui
 # ya sirf trades kam ho gaye.
 # ==========================================================================
-REQUIRE_TREND_REGIME = True   # Ranging market mein trade nahi
+# "any"      = sab chalega (filter off)
+# "not_range"= sirf "Ranging" block hota hai  <- purana behaviour
+# "strict"   = SIRF "Trending" pe trade, "Transition" bhi block
+#
+# Test se (choppy data pe regime classification):
+#     Ranging 72% | Transition 25% | Trending 3%
+# "not_range" pe wo 28% nikal jaata tha -- aur unhi trades ne 0% jeeta,
+# -0.86R per trade. "strict" us leak ko band karta hai.
+REGIME_MODE = "strict"
 REQUIRE_BOS = False           # Break of Structure zaroori
 REQUIRE_ORDER_BLOCK = False   # Order Block zaroori
 REQUIRE_FVG = False           # Fair Value Gap zaroori

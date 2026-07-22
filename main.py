@@ -134,7 +134,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     await update.message.reply_text(
-        "🤖 AI SCALPER PRO V5.1\n\n"
+        "🤖 AI SCALPER PRO V5.5\n\n"
         "✅ Bot Online\n"
         "📡 AI Signal Engine Active\n\n"
         "Commands:\n"
@@ -314,7 +314,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stats",   stats))
     app.add_handler(CommandHandler("history", history))
 
-    logger.info("🚀 Gold AI Scalper Pro V5.0 starting…")
+    logger.info("🚀 Gold AI Scalper Pro V5.5 starting…")
     app.run_polling(drop_pending_updates=True)
 
 

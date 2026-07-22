@@ -38,7 +38,7 @@ def format_signal(candles, result, decimals=2, label=None):
 
     ai_score = min(result["ai_score"], 100)
 
-    return f"""🤖 AI SCALPER PRO V5.1 — {asset_label}
+    return f"""🤖 AI SCALPER PRO V5.5 — {asset_label}
 
 💰 Price : {price:.{decimals}f}
 

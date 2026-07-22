@@ -85,6 +85,88 @@ def resample(rows, factor):
     return out
 
 
+
+# ─────────────────────── CSV LOADER (offline mode) ───────────────────────
+
+def load_csv(path):
+    """
+    Historical data CSV se padho -- internet ki zaroorat nahi.
+
+    Ye formats apne aap pehchaan leta hai:
+      MT5 export   : <DATE><TAB><TIME><TAB><OPEN><TAB><HIGH>...
+      MT4 export   : 2024.01.15,09:30,2030.5,2031.2,2029.8,2030.9,120
+      TradingView  : time,open,high,low,close,Volume
+      Generic      : koi bhi header jismein open/high/low/close ho
+
+    Separator (comma / tab / semicolon) khud detect hota hai.
+    Returns: [(index, open, high, low, close, volume), ...]
+    """
+    import csv as _csv
+
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+        sample = fh.read(8192)
+        fh.seek(0)
+        try:
+            sep = _csv.Sniffer().sniff(sample, delimiters=",\t;").delimiter
+        except Exception:
+            sep = "\t" if "\t" in sample else ","
+        rows = [r for r in _csv.reader(fh, delimiter=sep) if r]
+
+    if not rows:
+        sys.exit(f"CSV khaali hai: {path}")
+
+    header = [h.strip().lower().lstrip("<").rstrip(">") for h in rows[0]]
+    has_header = any(k in header for k in ("open", "high", "low", "close"))
+
+    if has_header:
+        idx = {}
+        for want in ("open", "high", "low", "close", "volume", "vol", "tickvol"):
+            for i, h in enumerate(header):
+                if h == want or h.endswith(want):
+                    idx.setdefault(want, i)
+        o_i, h_i = idx.get("open"), idx.get("high")
+        l_i, c_i = idx.get("low"), idx.get("close")
+        v_i = idx.get("volume", idx.get("vol", idx.get("tickvol")))
+        if None in (o_i, h_i, l_i, c_i):
+            sys.exit(f"CSV mein open/high/low/close columns nahi mile. "
+                     f"Header dikha: {header}")
+        data_rows = rows[1:]
+    else:
+        first = rows[0]
+        nums = []
+        for i, v in enumerate(first):
+            try:
+                float(v); nums.append(i)
+            except ValueError:
+                pass
+        if len(nums) < 4:
+            sys.exit("CSV samajh nahi aayi. Header ke saath export karein.")
+        o_i, h_i, l_i, c_i = nums[0], nums[1], nums[2], nums[3]
+        v_i = nums[4] if len(nums) > 4 else None
+        data_rows = rows
+
+    out, skipped = [], 0
+    for n, r in enumerate(data_rows):
+        try:
+            o = float(r[o_i]); h = float(r[h_i])
+            l = float(r[l_i]); c = float(r[c_i])
+            v = float(r[v_i]) if v_i is not None and v_i < len(r) and r[v_i] else 0.0
+            if h < l or o <= 0 or c <= 0:
+                skipped += 1
+                continue
+            out.append((n, o, h, l, c, v))
+        except (ValueError, IndexError):
+            skipped += 1
+            continue
+
+    if len(out) < 300:
+        sys.exit(f"Sirf {len(out)} valid candles mile -- kam se kam 300 chahiye.")
+
+    print(f"  CSV loaded: {len(out)} candles"
+          + (f" ({skipped} rows skipped)" if skipped else ""))
+    return out
+
+
 # ─────────────────────────── trade model ───────────────────────────
 
 @dataclass
@@ -178,13 +260,33 @@ def simulate(trade: Trade, bars, start_i, spread, max_bars, targets=None):
 
 # ─────────────────────────── engine ───────────────────────────
 
-def run(asset, days, spread, cooldown_bars, max_bars, overrides, targets=None):
+def run(asset, days, spread, cooldown_bars, max_bars, overrides,
+        targets=None, csv_path=None, csv_tf=1):
     cfg = ASSETS[asset]
     dec = cfg["decimals"]
 
     for k, v in overrides.items():
         if v is not None:
             setattr(strategy, k, v)
+
+    if csv_path:
+        print(f"Loading {csv_path} (offline mode — no network needed)...")
+        base = load_csv(csv_path)
+        if csv_tf == 1:
+            m1 = base
+            m5 = resample(base, 5)
+            m15 = resample(base, 15)
+        elif csv_tf == 5:
+            m1 = base                 # 1m ke badle 5m hi use hoga
+            m5 = base
+            m15 = resample(base, 3)
+        else:
+            sys.exit("--csv-timeframe sirf 1 ya 5 ho sakta hai")
+        print(f"  bars: 1m={len(m1)}  5m={len(m5)}  15m={len(m15)}")
+        if len(m5) < 300:
+            sys.exit("Not enough 5m bars to backtest.")
+        return _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars,
+                       max_bars, targets)
 
     print(f"Fetching {cfg['label']} ({cfg['symbol']}) — {days}d of 1m data...")
     m1 = fetch(cfg["symbol"], "1m", min(days, 7))
@@ -201,6 +303,11 @@ def run(asset, days, spread, cooldown_bars, max_bars, overrides, targets=None):
     if len(m5) < 300:
         sys.exit("Not enough 5m bars to backtest (need 200 warmup + samples).")
 
+    return _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars,
+                   max_bars, targets)
+
+
+def _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars, max_bars, targets):
     trades = []
     last_signal_bar = -10 ** 9
     open_until = -1
@@ -315,6 +422,11 @@ def main():
     p.add_argument("--min-confirmations", type=int, default=None)
     p.add_argument("--walk-forward", action="store_true",
                    help="pehle aadhe data pe result, doosre aadhe pe alag se — overfit check")
+    p.add_argument("--csv", default=None,
+                   help="historical data CSV se backtest karo (internet ki "
+                        "zaroorat nahi). MT4/MT5/TradingView export chalega.")
+    p.add_argument("--csv-timeframe", type=int, default=1, choices=(1, 5),
+                   help="CSV mein candles kis timeframe ki hain (1 ya 5 min)")
     p.add_argument("--sweep-tp", action="store_true",
                    help="alag TP structures test karo (TP3 hata ke bhi)")
     p.add_argument("--sweep-sl", action="store_true",
@@ -374,7 +486,9 @@ def main():
 
     t0 = time.time()
     trades = run(a.asset, a.days, spread, a.cooldown_bars, a.max_bars,
-                 {"MIN_SCORE": a.min_score, "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations})
+                 {"MIN_SCORE": a.min_score,
+                  "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations},
+                 csv_path=a.csv, csv_tf=a.csv_timeframe)
 
     tag = (f"{ASSETS[a.asset]['label']} | {a.days}d | spread={spread} | "
            f"score>={a.min_score or strategy.MIN_SCORE} | "

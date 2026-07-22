@@ -1,4 +1,4 @@
-# AI Scalper Pro V5.0
+# AI Scalper Pro V5.5
 
 Telegram bot jo Gold, BTC, Oil, EUR/USD, USD/JPY, LINK, aur ATOM ke liye
 AI-scored trading signals deta hai — technical indicators, multi-timeframe
