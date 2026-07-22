@@ -8,6 +8,9 @@ from risk import calculate_trade
 from smart_money import analyze_smart_money
 from patterns import detect_pattern
 from session import get_current_session
+from market_regime import detect_regime
+from config import (REQUIRE_TREND_REGIME, REQUIRE_BOS, REQUIRE_ORDER_BLOCK,
+                    REQUIRE_FVG, REQUIRE_HTF_ALIGN, MIN_RR)
 
 # ==========================================================================
 # SCORE WEIGHTS
@@ -87,6 +90,10 @@ def _empty_result(reason="Not enough candles"):
         "volume_ok": False, "atr_ok": False, "liquidity_ok": False,
         "macd": {"macd": 0, "signal": 0, "trend": "-"}, "rsi": 0,
         "pattern": "None", "liquidity_sweep": "NO", "bollinger": "None",
+        "regime": "-", "regime_note": "-", "bb_percentile": 0,
+        "structure": "-", "bos": "No", "choch": "No",
+        "order_block": "None", "fvg": "No", "premium_discount": "-",
+        "quality_fails": [],
         "buy_confirmations": 0, "sell_confirmations": 0,
         "buy_directional": 0, "sell_directional": 0,
         "unavailable": [], "reasons": [reason],
@@ -118,7 +125,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
 
     bb_signal = bollinger_signal(close, high, low)
     st = supertrend(high, low, close)
-    smc = analyze_smart_money(high, low, close)
+    smc = analyze_smart_money(high, low, close, open_)
+    regime = detect_regime(close, high, low)      # Feature #6
     session_name, session_active = get_current_session()
 
     if open_:
@@ -279,6 +287,37 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     )
 
     # ======================================================================
+    # TRADE QUALITY FILTER (Feature #15)
+    # Har gate config.py se on/off hota hai. Default: sirf regime aur HTF
+    # on hain -- baaki off, kyunki sab ek saath on karne pe signals
+    # lagbhag zero ho jaate hain.
+    # ======================================================================
+    quality_fails = []
+
+    if REQUIRE_TREND_REGIME and not regime["trend_ok"]:
+        quality_fails.append(f"Regime: {regime['regime']}")
+
+    if REQUIRE_HTF_ALIGN:
+        htf_bull = trend15 in bullish_trends
+        htf_bear = trend15 in bearish_trends
+        if buy_qualifies and not htf_bull:
+            quality_fails.append("15m trend BUY ke saath nahi")
+        if sell_qualifies and not htf_bear:
+            quality_fails.append("15m trend SELL ke saath nahi")
+
+    if REQUIRE_BOS and not smc["bos"]:
+        quality_fails.append("No Break of Structure")
+
+    if REQUIRE_ORDER_BLOCK and smc["order_block"] == "None":
+        quality_fails.append("No Order Block")
+
+    if REQUIRE_FVG and not smc["fvg"]:
+        quality_fails.append("No Fair Value Gap")
+
+    if quality_fails:
+        buy_qualifies = sell_qualifies = False
+
+    # ======================================================================
     # FINAL -- conflict resolution ke saath
     # ======================================================================
     conflict_note = None
@@ -327,6 +366,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         final_signal = "NO TRADE"
         if conflict_note:
             reasons = [conflict_note]
+        elif quality_fails:
+            reasons = [f"NO TRADE - quality filter: {', '.join(quality_fails)}"]
         else:
             side_bull = buy_score >= sell_score
             checklist = {
@@ -403,6 +444,20 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         session_active=session_active, spread=spread,
     )
 
+    # MIN_RR gate — spread ke baad RR itna to hona hi chahiye
+    if final_signal != "NO TRADE" and MIN_RR:
+        try:
+            rr_val = float(str(trade_levels["risk_reward"]).split(":")[1])
+            if rr_val < MIN_RR:
+                reasons = [f"NO TRADE - RR {rr_val} < required {MIN_RR} "
+                           f"(spread ke baad)"]
+                final_signal = "NO TRADE"
+                trade_levels = calculate_trade("NO TRADE", price, atr_value,
+                                               decimals=decimals)
+                signal_tier, position_size_pct = "-", "-"
+        except (ValueError, IndexError):
+            pass
+
     return {
         "signal": final_signal,
         "confidence": setup_strength,
@@ -427,6 +482,16 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         "macd": macd_value,
         "rsi": rsi_value,
         "adx_value": adx_value,
+        "regime": regime["regime"],
+        "regime_note": regime["note"],
+        "bb_percentile": regime["bb_percentile"],
+        "structure": smc["structure"],
+        "bos": smc["bos_direction"] if smc["bos"] else "No",
+        "choch": smc["choch_direction"] if smc["choch"] else "No",
+        "order_block": smc["order_block"],
+        "fvg": smc["fvg_direction"] if smc["fvg"] else "No",
+        "premium_discount": smc["premium_discount"],
+        "quality_fails": quality_fails,
         "pattern": pattern_name,
         "liquidity_sweep": smc["liquidity_side"] if smc["liquidity"] else "NO",
         "bollinger": bb_signal,

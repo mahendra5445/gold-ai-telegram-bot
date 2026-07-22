@@ -16,6 +16,7 @@ from data import get_latest_price
 from shared_state import trade_lock
 from trade_tracker import (
     get_open_trades, get_expired_trades, mark_tp_hit, close_trade,
+    update_trailing_stop,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,20 @@ async def _check_trade(application, trade: dict, price: float) -> None:
         if trade["status"] != "OPEN":
             return
 
+        # Feature #7 — SL ko trail karo events check karne se PEHLE,
+        # taaki naya (behtar) SL usi cycle mein effective ho jaaye.
+        trailed = update_trailing_stop(trade, price, trade.get("atr_at_entry"))
+
         events = _compute_events(trade, price)
         if not events:
+            if trailed:
+                notifications.append(
+                    f"🔒 SL TRAILED\n\n{head}\n"
+                    f"Naya SL : {trailed}\nPrice : {px}\n\n"
+                    f"Profit lock ho gaya."
+                )
+            for msg in notifications:
+                await _notify_all(application, msg)
             return
 
         for level in events:

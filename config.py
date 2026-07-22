@@ -96,3 +96,40 @@ TRADE_EXPIRY_MINUTES = 120
 # ==========================================================================
 MAX_TRADES_PER_DAY = 6          # per asset
 MAX_DAILY_LOSS_R = -4.0         # is R pe pahunchne ke baad us din naye signals band
+
+
+# ==========================================================================
+# ATR TRAILING STOP (Feature #7) — NAYA
+# Pehle TP2 ke baad message aata tha "Trail SL for remainder" lekin code
+# trail karta hi nahi tha — SL entry pe hi khada rehta tha. Ab asli
+# trailing hai: price ke saath SL ATR ke faasle pe peechhe chalta hai,
+# aur kabhi ulti taraf nahi jaata.
+# ==========================================================================
+TRAILING_ENABLED = True
+TRAILING_ATR_MULT = 2.0      # SL price se itne ATR peechhe chalega
+TRAILING_START_R = 1.0       # itne R profit ke baad trailing shuru
+
+# ==========================================================================
+# SPREAD FILTER (Feature #11) — NAYA
+# Agar live spread normal se zyada chauda ho (news, low liquidity, rollover)
+# to trade skip. Sirf gold pe kaam karta hai — Swissquote bid/ask deta hai.
+# Baaki pairs pe Yahoo bid/ask nahi deta, wahan config ka spread hi use hoga.
+# ==========================================================================
+SPREAD_FILTER_ENABLED = True
+MAX_SPREAD_MULT = 2.0        # config spread se itne guna se zyada = skip
+
+# ==========================================================================
+# TRADE QUALITY FILTER (Feature #15) — NAYA
+# Har item optional hai. True karne se wo condition ZAROORI ho jaati hai.
+#
+# ⚠️ SAAVDHAANI: jitne zyada True karenge, utne kam signals aayenge.
+# Sab ek saath True karne pe hafton tak ek bhi signal nahi aayega.
+# Ek-ek karke on karein aur backtest se dekhein ki expectancy behtar hui
+# ya sirf trades kam ho gaye.
+# ==========================================================================
+REQUIRE_TREND_REGIME = True   # Ranging market mein trade nahi
+REQUIRE_BOS = False           # Break of Structure zaroori
+REQUIRE_ORDER_BLOCK = False   # Order Block zaroori
+REQUIRE_FVG = False           # Fair Value Gap zaroori
+REQUIRE_HTF_ALIGN = True      # 15m trend signal ke saath hona chahiye
+MIN_RR = 2.0                  # is se kam RR wale trades skip

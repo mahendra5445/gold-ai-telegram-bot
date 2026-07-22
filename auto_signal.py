@@ -13,8 +13,8 @@ import asyncio
 import logging
 import time
 
-from config import ASSETS, ASSET_LIST
-from data import get_candles, get_latest_price
+from config import ASSETS, ASSET_LIST, SPREAD_FILTER_ENABLED, MAX_SPREAD_MULT
+from data import get_candles, get_latest_price, get_live_spread
 from formatter import format_signal
 from news import is_high_impact_news
 from risk import calculate_trade
@@ -46,6 +46,19 @@ async def _check_asset(application, asset: str) -> None:
     decimals = cfg["decimals"]
     label = cfg["label"]
     spread = cfg.get("spread", 0.0)
+
+    # Feature #11 — SPREAD FILTER. Live spread normal se zyada chauda ho
+    # (news, rollover, low liquidity) to trade hi mat lo. Gold pe Swissquote
+    # se asli bid/ask milta hai; baaki pairs pe None aata hai aur config ka
+    # fixed spread use hota hai.
+    if SPREAD_FILTER_ENABLED:
+        live_spread = await asyncio.to_thread(get_live_spread, asset)
+        if live_spread is not None:
+            if live_spread > spread * MAX_SPREAD_MULT:
+                logger.info(f"[SPREAD] {asset.upper()} skipped — spread "
+                            f"{live_spread} > {spread * MAX_SPREAD_MULT:.4f}")
+                return
+            spread = live_spread     # asli spread use karo, andaaza nahi
 
     candles = await asyncio.to_thread(get_candles, asset)
     result = get_signal(

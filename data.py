@@ -396,3 +396,31 @@ def get_candles(asset: str = "gold") -> dict:
             "15m": tf15["close"],
         },
     }
+
+
+# ── LIVE SPREAD (Feature #11) ────────────────────────────────────────────
+
+def get_live_spread(asset: str) -> float | None:
+    """
+    Asli live spread nikaalta hai (ask - bid).
+
+    Sirf gold pe kaam karta hai — Swissquote broker-grade feed bid aur ask
+    dono deta hai. Yahoo sirf last price deta hai, bid/ask nahi, isliye
+    baaki pairs pe None return hota hai aur caller config ka fixed spread
+    use karta hai.
+    """
+    if asset.lower() != "gold":
+        return None
+    try:
+        url = ("https://forex-data-feed.swissquote.com/public-quotes/"
+               "bboquotes/instrument/XAU/USD")
+        r = requests.get(url, headers=YF_HEADERS, timeout=10)
+        r.raise_for_status()
+        for platform in r.json():
+            for p in (platform.get("spreadProfilePrices") or []):
+                bid, ask = p.get("bid"), p.get("ask")
+                if bid and ask:
+                    return round(float(ask) - float(bid), 4)
+    except Exception as e:
+        logger.warning(f"[SPREAD] live spread fetch failed for {asset}: {e}")
+    return None

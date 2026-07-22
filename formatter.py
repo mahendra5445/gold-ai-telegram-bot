@@ -66,7 +66,17 @@ def format_signal(candles, result, decimals=2, label=None):
 📊 Supertrend : {_check(result.get('supertrend_ok'))}
 📊 Volume : {_check(result.get('volume_ok'), result.get('volume_available', True))}
 📊 Pattern : {result.get('pattern', 'None')}
-📊 Liquidity Sweep : {result.get('liquidity_sweep', 'NO')}
+
+━━━━━━━━━━━━━━━━━━
+
+🧭 Regime : {result.get('regime', '-')}
+🏗 Structure : {result.get('structure', '-')}
+💥 BOS : {result.get('bos', 'No')}
+🔄 CHoCH : {result.get('choch', 'No')}
+🧱 Order Block : {result.get('order_block', 'None')}
+🕳 FVG : {result.get('fvg', 'No')}
+💧 Liquidity Sweep : {result.get('liquidity_sweep', 'NO')}
+⚖️ Premium/Discount : {result.get('premium_discount', '-')}
 
 ━━━━━━━━━━━━━━━━━━
 

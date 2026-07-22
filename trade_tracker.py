@@ -17,7 +17,8 @@ import logging
 from datetime import datetime, timedelta
 
 from config import SCALE_OUT, TP_MULTIPLES, TRADE_EXPIRY_MINUTES, \
-    MAX_TRADES_PER_DAY, MAX_DAILY_LOSS_R
+    MAX_TRADES_PER_DAY, MAX_DAILY_LOSS_R, TRAILING_ENABLED, \
+    TRAILING_ATR_MULT, TRAILING_START_R
 from persistence import load_trades_from_disk, save_trades_to_disk
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,8 @@ def save_trade(result: dict, asset: str = "gold") -> dict | None:
         # NAYA: realized R aur bacha hua position size
         "realized_r": 0.0,
         "remaining": 1.0,
+        "trailing_active": False,
+        "atr_at_entry": round(float(result.get("atr_value") or 0), 5),
         "status": "OPEN",
         "time": datetime.now().strftime(TIME_FMT),
         "expires_at": (datetime.now() + timedelta(minutes=TRADE_EXPIRY_MINUTES)
@@ -167,6 +170,46 @@ def mark_tp_hit(trade: dict, level: int) -> float:
     logger.info(f"[TRADE] #{trade['id']} TP{level} hit — +{gained:.2f}R "
                 f"(total {trade['realized_r']:.2f}R, {trade['remaining']:.0%} left)")
     return gained
+
+
+def update_trailing_stop(trade: dict, price: float, atr_value: float) -> float | None:
+    """
+    Feature #7 — ATR trailing stop.
+
+    SL ko price ke peechhe TRAILING_ATR_MULT x ATR pe chalata hai.
+    Rules:
+      - Sirf TRAILING_START_R profit ke baad shuru hota hai
+      - SL kabhi peechhe nahi jaata (BUY mein sirf upar, SELL mein sirf neeche)
+      - Breakeven se neeche kabhi nahi jaata (TP1 ke baad)
+    Returns: naya SL agar badla, warna None.
+    """
+    if not TRAILING_ENABLED or trade["status"] != "OPEN":
+        return None
+    if not atr_value or atr_value <= 0:
+        return None
+    if _r_at(trade, price) < TRAILING_START_R:
+        return None
+
+    is_buy = trade["signal"] == "BUY"
+    gap = atr_value * TRAILING_ATR_MULT
+    candidate = price - gap if is_buy else price + gap
+
+    # TP1 ke baad breakeven se neeche mat jao
+    floor_ = trade["entry"] if trade.get("hit_tp1") else None
+    if floor_ is not None:
+        candidate = max(candidate, floor_) if is_buy else min(candidate, floor_)
+
+    current = trade["sl"]
+    improved = candidate > current if is_buy else candidate < current
+    if not improved:
+        return None
+
+    trade["sl"] = round(candidate, 5)
+    trade["trailing_active"] = True
+    _persist()
+    logger.info(f"[TRADE] #{trade['id']} SL trailed → {trade['sl']} "
+                f"({_r_at(trade, price):.2f}R in profit)")
+    return trade["sl"]
 
 
 def close_trade(trade: dict, price: float, status: str) -> bool:
