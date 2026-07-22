@@ -1,91 +1,73 @@
 import math
 
+from config import (
+    SL_ATR_MULT,
+    MIN_SL_PCT,
+    LOW_LIQUIDITY_FACTOR,
+    TP_MULTIPLES,
+)
 
-def calculate_trade(signal, price, atr, decimals=2, session_active=True):
+
+def calculate_trade(signal, price, atr, decimals=2, session_active=True,
+                    spread=0.0, sl_mult=None, tp_multiples=None):
     """
-    Smart Risk Management
-    - ATR based Stop Loss
-    - TP1, TP2, TP3 built off the risk distance so Risk:Reward
-      is always at least 1:2
+    ATR-based SL aur R-multiple TPs.
 
-    `decimals` controls rounding precision — gold/BTC/oil use 2, but a pair
-    like EUR/USD needs 4-5 decimals or a 0.01 rounding would erase ~100 pips
-    of precision. Defaults to 2 for backward compatibility with old callers.
-
-    `session_active` — True for London/New York, False for Asian/Off-Hours
-    (see session.py). Passed through so the SL can be widened below.
+    Naya kya hai:
+      - Multipliers ab config.py se aate hain (hardcoded nahi), aur
+        arguments se override ho sakte hain -- taaki backtest inhe sweep
+        kar sake bina file edit kiye.
+      - `spread` ab risk mein add hota hai. Broker ka spread ek REAL cost
+        hai jo pehle kahin count hi nahi hota tha: gold pe $0.25 spread
+        $3.60 ke minimum SL ka ~7% hai. Ab RR jo dikhta hai wo cost ke
+        baad ka honest number hai.
+      - `risk_per_unit` return hota hai taaki tracker realized R nikaal sake.
     """
 
     if signal not in ["BUY", "SELL"]:
         return {
-            "entry": None,
-            "sl": None,
-            "tp1": None,
-            "tp2": None,
-            "tp3": None,
-            "risk_reward": "-"
+            "entry": None, "sl": None, "tp1": None, "tp2": None, "tp3": None,
+            "targets": [], "risk_reward": "-", "risk_per_unit": None,
         }
+
+    sl_mult = SL_ATR_MULT if sl_mult is None else sl_mult
+    tp_multiples = TP_MULTIPLES if tp_multiples is None else tp_multiples
 
     entry = round(price, decimals)
 
-    # BUG FIX: SL was only 1.5x ATR(5m). On gold that's often just $1-2,
-    # which sits inside normal broker spread + tick noise, so trades were
-    # getting stopped out almost immediately even when direction was
-    # right (this is why SL Hit was far higher than TP Hit / win rate
-    # was ~0%). Widened to 2.5x ATR — a more realistic scalping stop.
-    #
-    # BUG FIX (SL hitting too early during Asian/low-liquidity session):
-    # strategy.py stopped hard-blocking Asian-session trades (session_ok is
-    # now info-only), but this function still used the exact same SL
-    # distance for every session. Asian/off-hours session = thinner order
-    # books = wider real broker spread + more noisy wicks relative to the
-    # same ATR reading, so a stop sized for London/NY liquidity gets tagged
-    # by spread/noise alone, not a genuine move against you. When
-    # session_active is False we widen both the ATR multiplier and the
-    # minimum floor by 40%.
-    session_factor = 1.0 if session_active else 1.4
-    sl_mult = 2.5 * session_factor
+    session_factor = 1.0 if session_active else LOW_LIQUIDITY_FACTOR
+    effective_mult = sl_mult * session_factor
 
-    # atr can come through as NaN if upstream data had a gap - guard that
-    # explicitly since `nan <= 0` is False in Python, so the old
-    # "risk <= 0" fallback below would silently let NaN through and turn
-    # every SL/TP into "nan" in the Telegram message.
     if atr is None or (isinstance(atr, float) and math.isnan(atr)):
         atr = 0
 
-    risk = round(atr * sl_mult, decimals)
+    risk = atr * effective_mult
 
-    # BUG FIX: minimum SL floor. Previously the price*0.001 fallback only
-    # kicked in when risk was <= 0. In quiet markets ATR could still
-    # produce a small positive risk (e.g. ~$1) that slipped straight
-    # through spread/noise and got stopped out instantly. Now we always
-    # enforce a floor of 0.15% of price (0.21% during Asian/off-hours),
-    # regardless of how small ATR is.
-    min_risk = round(price * 0.0015 * session_factor, decimals)
-    if risk < min_risk:
-        risk = min_risk
+    # Minimum SL floor -- quiet market mein ATR itna chhota ho sakta hai ki
+    # SL spread/noise ke andar hi aa jaaye aur turant hit ho.
+    min_risk = price * MIN_SL_PCT * session_factor
+    risk = max(risk, min_risk)
 
-    # Reward multiples of risk -> TP1 = 2.5R, TP2 = 4R, TP3 = 6R (runner target)
-    tp1_reward = risk * 2.5
-    tp2_reward = risk * 4.0
-    tp3_reward = risk * 6.0
+    # Spread ko risk mein jodo -- aap entry pe hi spread ke barabar peeche
+    # hote hain, to asli stop distance utni hi zyada hai.
+    risk = round(risk + spread, decimals)
 
-    if signal == "BUY":
-        sl = round(entry - risk, decimals)
-        tp1 = round(entry + tp1_reward, decimals)
-        tp2 = round(entry + tp2_reward, decimals)
-        tp3 = round(entry + tp3_reward, decimals)
+    # FIX: pehle `r1, r2, r3 = tp_multiples` tha -- exactly 3 targets zaroori
+    # the, warna crash. Ab kitne bhi targets chal jaate hain (1, 2, ya 3),
+    # taaki single-TP structure config se set kiya ja sake.
+    sign = 1 if signal == "BUY" else -1
+    sl = round(entry - sign * risk, decimals)
+    tps = [round(entry + sign * risk * m, decimals) for m in tp_multiples]
 
-    else:  # SELL
-        sl = round(entry + risk, decimals)
-        tp1 = round(entry - tp1_reward, decimals)
-        tp2 = round(entry - tp2_reward, decimals)
-        tp3 = round(entry - tp3_reward, decimals)
+    # Purane keys backward-compatible rakhe -- jo target hai hi nahi wo None.
+    tp1 = tps[0] if len(tps) > 0 else None
+    tp2 = tps[1] if len(tps) > 1 else None
+    tp3 = tps[2] if len(tps) > 2 else None
 
     actual_risk = abs(entry - sl)
-    actual_reward = abs(tp1 - entry)
-
-    rr = round(actual_reward / actual_risk, 2) if actual_risk > 0 else 0
+    # RR ab spread ke baad ka net hai (round-trip cost = 1 spread).
+    net_reward = abs(tp1 - entry) - spread
+    rr = round(net_reward / actual_risk, 2) if actual_risk > 0 else 0
 
     return {
         "entry": entry,
@@ -93,5 +75,7 @@ def calculate_trade(signal, price, atr, decimals=2, session_active=True):
         "tp1": tp1,
         "tp2": tp2,
         "tp3": tp3,
-        "risk_reward": f"1:{rr}"
+        "targets": tps,
+        "risk_reward": f"1:{rr}",
+        "risk_per_unit": actual_risk,
     }

@@ -76,7 +76,9 @@ async def post_shutdown(application: Application) -> None:
 # ── command helpers ───────────────────────────────────────────────────────
 
 async def _build_result(candles: dict, asset: str = "gold") -> dict:
-    decimals = ASSETS[asset.lower()]["decimals"]
+    cfg = ASSETS[asset.lower()]
+    decimals = cfg["decimals"]
+    spread = cfg.get("spread", 0.0)
     result = get_signal(
         candles["close"],
         candles["high"],
@@ -85,6 +87,7 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
         candles.get("volume"),
         candles.get("open"),
         decimals=decimals,
+        spread=spread,
     )
 
     # BUG FIX (MT5 price mismatch): manual /gold aur /btc commands mein
@@ -108,6 +111,7 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
                 calculate_trade(
                     result["signal"], live_price, result.get("atr_value", 0),
                     decimals=decimals, session_active=result.get("session_active", True),
+                    spread=spread,
                 )
             )
 
@@ -130,7 +134,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     await update.message.reply_text(
-        "🤖 AI SCALPER PRO V5.0\n\n"
+        "🤖 AI SCALPER PRO V5.1\n\n"
         "✅ Bot Online\n"
         "📡 AI Signal Engine Active\n\n"
         "Commands:\n"
@@ -210,6 +214,36 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
+
+def _stats_block(title: str, s: dict) -> str:
+    """
+    NAYA: expectancy ab sabse upar hai, win rate ke neeche.
+    Expectancy = avg R per trade. YEHI batata hai strategy paisa banati hai
+    ya nahi. Win rate 80% ho sakta hai aur expectancy phir bhi negative --
+    agar jeetein chhoti aur haarein badi hon.
+    """
+    verdict = ("🟢 profitable is sample pe" if s["expectancy"] > 0.05 else
+               "🟡 flat — noise bhi ho sakta hai" if s["expectancy"] > 0 else
+               "🔴 paisa kho rahe hain")
+    return (
+        f"📊 {title}\n\n"
+        f"📈 Total Signals : {s['total']}  (open: {s['open']})\n"
+        f"🟢 BUY / 🔴 SELL : {s['buy']} / {s['sell']}\n"
+        f"✅ Closed        : {s['closed']}\n\n"
+        f"💰 EXPECTANCY    : {s['expectancy']:+.4f} R/trade  {verdict}\n"
+        f"📊 Total         : {s['total_r']:+.2f} R\n"
+        f"📉 Max Drawdown  : {s['max_dd_r']:.2f} R\n\n"
+        f"🏆 Win Rate      : {s['win_rate']}%\n"
+        f"   Avg Win       : {s['avg_win_r']:+.2f} R\n"
+        f"   Avg Loss      : {s['avg_loss_r']:+.2f} R\n\n"
+        f"🎯 Reached TP1   : {s['tp1_reached']}\n"
+        f"🎯 Reached TP3   : {s['tp3_reached']}\n"
+        f"🛑 SL Hit        : {s['sl']}\n"
+        f"⚪ Breakeven     : {s['be']}\n"
+        f"⏳ Expired       : {s['expired']}"
+    )
+
+
 async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # /stats <asset> -> just that asset. /stats -> combined + per-asset table.
     arg = context.args[0].lower() if context.args else None
@@ -221,16 +255,7 @@ async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
         s = get_stats(asset=arg)
-        await update.message.reply_text(
-            f"📊 TRADE STATISTICS — {ASSETS[arg]['label']}\n\n"
-            f"📈 Total Signals : {s['total']}\n"
-            f"🟢 BUY Signals   : {s['buy']}\n"
-            f"🔴 SELL Signals  : {s['sell']}\n"
-            f"🎯 TP Hit        : {s['tp']}\n"
-            f"⚪ Breakeven     : {s['be']}\n"
-            f"🛑 SL Hit        : {s['sl']}\n"
-            f"🏆 Win Rate      : {s['win_rate']}%"
-        )
+        await update.message.reply_text(_stats_block(f"TRADE STATISTICS — {ASSETS[arg]['label']}", s))
         return
 
     s = get_stats()
@@ -240,23 +265,15 @@ async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if a_stats["total"] == 0:
             continue
         breakdown_lines.append(
-            f"  {cfg['label']:<10} {a_stats['total']:>3} signals | "
-            f"{a_stats['win_rate']}% win"
+            f"  {cfg['label']:<10} {a_stats['total']:>3} sig | "
+            f"{a_stats['expectancy']:+.3f}R/trade | {a_stats['win_rate']}% win"
         )
     breakdown = "\n".join(breakdown_lines) if breakdown_lines else "  (no signals yet)"
 
     await update.message.reply_text(
-        f"📊 TRADE STATISTICS (All Assets)\n\n"
-        f"📈 Total Signals : {s['total']}\n"
-        f"🟢 BUY Signals   : {s['buy']}\n"
-        f"🔴 SELL Signals  : {s['sell']}\n"
-        f"🎯 TP Hit        : {s['tp']}\n"
-        f"⚪ Breakeven     : {s['be']}\n"
-        f"🛑 SL Hit        : {s['sl']}\n"
-        f"🏆 Win Rate      : {s['win_rate']}%\n\n"
-        f"Per-Asset:\n{breakdown}\n\n"
-        f"Tip: /stats <asset> for one asset's detail "
-        f"(e.g. /stats eurusd)"
+        _stats_block("TRADE STATISTICS (All Assets)", s)
+        + f"\n\nPer-Asset:\n{breakdown}\n\n"
+        f"Tip: /stats <asset> for one asset's detail (e.g. /stats eurusd)"
     )
 
 
