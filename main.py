@@ -165,10 +165,13 @@ def _make_asset_handler(asset: str):
     return _handler
 
 
-# One handler per configured asset (gold, btc, oil, eurusd, usdjpy, link, atom, …)
+# One handler per configured asset (dynamically created from ASSETS config)
 _asset_handlers = {a: _make_asset_handler(a) for a in ASSETS}
 gold = _asset_handlers["gold"]
-btc  = _asset_handlers["btc"]
+# Dynamically create handlers for all configured assets (no hardcoded asset names)
+eurusd = _asset_handlers.get("eurusd")
+gbpusd = _asset_handlers.get("gbpusd")
+usdjpy = _asset_handlers.get("usdjpy")
 
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
