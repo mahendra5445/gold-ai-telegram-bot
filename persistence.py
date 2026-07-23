@@ -100,3 +100,33 @@ def save_admins(admins: list[int]) -> None:
         os.replace(tmp, ADMINS_FILE)
     except Exception as e:
         logger.error(f"[PERSISTENCE] Save admins error: {e}")
+
+# ────────────────────── WhatsApp subscribers ──────────────────────
+# whatsapp.py ke liye: jin numbers ne START bheja hai unki list.
+# Wahi atomic write pattern jo admins/trades ke liye use hota hai.
+
+WA_SUBS_FILE = os.path.join(DATA_DIR, "wa_subscribers.json")
+
+
+def load_wa_subscribers() -> list[str]:
+    _ensure_dir()
+    if not os.path.exists(WA_SUBS_FILE):
+        return []
+    try:
+        with open(WA_SUBS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return [str(x) for x in data] if isinstance(data, list) else []
+    except Exception as e:
+        logger.warning(f"[PERSISTENCE] WhatsApp subscriber load error: {e}")
+        return []
+
+
+def save_wa_subscribers(numbers: list[str]) -> None:
+    _ensure_dir()
+    tmp = WA_SUBS_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(sorted({str(n) for n in numbers}), f)
+        os.replace(tmp, WA_SUBS_FILE)
+    except Exception as e:
+        logger.error(f"[PERSISTENCE] Save WhatsApp subscribers error: {e}")

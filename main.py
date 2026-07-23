@@ -28,6 +28,7 @@ from strategy import get_signal
 from trade_monitor import trade_monitor_job
 from trade_tracker import get_stats, history_text
 from watchdog import watchdog_job
+from whatsapp import start_whatsapp_server
 
 # ── logging must be configured before any module uses it ─────────────────
 setup_logging()
@@ -313,6 +314,14 @@ def main() -> None:
     app.add_handler(CommandHandler("trend",   trend))
     app.add_handler(CommandHandler("stats",   stats))
     app.add_handler(CommandHandler("history", history))
+
+    # WhatsApp Flask server ek daemon thread mein — run_polling() se PEHLE,
+    # kyunki run_polling() blocking hai aur uske baad ka code kabhi nahi
+    # chalta. Server crash ho to bot ko mat roko, sirf log karo.
+    try:
+        start_whatsapp_server()
+    except Exception as e:
+        logger.error(f"[WA] Server start failed (bot chalta rahega): {e}")
 
     logger.info("🚀 Gold AI Scalper Pro V5.5 starting…")
     app.run_polling(drop_pending_updates=True)
