@@ -100,5 +100,6 @@ def format_signal(candles, result, decimals=2, label=None):
 📊 Buy : {result.get('buy_directional', 0)} directional / {result['buy_confirmations']} total
 📉 Sell : {result.get('sell_directional', 0)} directional / {result['sell_confirmations']} total
 
-⏰ Valid : {result.get('valid_minutes', 8)} Minutes
+⏰ Entry valid : {result.get('valid_minutes', 15)} min
+⏳ Max hold : {round(result.get('max_hold_minutes', 480) / 60, 1)} hrs (phir auto-close)
 """

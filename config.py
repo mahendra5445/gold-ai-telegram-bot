@@ -104,6 +104,17 @@ SCALE_OUT = (1.00,)
 # ek session ke andar free bhi ho jaata hai.
 TRADE_EXPIRY_MINUTES = 480
 
+# ── SIGNAL TIMING — ek hi jagah, warna teen alag sach ban jaate hain ──────
+# BUG jo tha: strategy.py mein SIGNAL_VALID_MINUTES = 8 hardcoded tha aur
+# Telegram message "Valid : 8 Minutes" chhaapta tha. Lekin auto_signal_job
+# har 15 MINUTE pe check karta hai (yaani 8-minute wali window ka koi matlab
+# hi nahi tha), aur trade upar wali 480 MINUTE expiry tak open rehta tha.
+# User ko lagta tha signal 8 minute ka hai -- bot 8 GHANTE hold kar raha tha.
+# Ab teenon yahan se aate hain aur message dono numbers dikhata hai.
+SIGNAL_CYCLE_MINUTES = 15        # auto_signal_job kitni der baad dobara dekhta hai
+SIGNAL_VALID_MINUTES = 15        # entry level kitni der kaam ka hai
+SIGNAL_COOLDOWN_MINUTES = 15     # ek hi asset pe do signals ke beech ka farq
+
 # ==========================================================================
 # CIRCUIT BREAKER -- ek kharab din ko rokne ke liye
 # ==========================================================================

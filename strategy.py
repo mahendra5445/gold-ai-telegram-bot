@@ -10,7 +10,8 @@ from patterns import detect_pattern
 from session import get_current_session
 from market_regime import detect_regime
 from config import (REQUIRE_BOS, REQUIRE_ORDER_BLOCK, REQUIRE_FVG,
-                    REQUIRE_HTF_ALIGN, MIN_RR, REGIME_MODE)
+                    REQUIRE_HTF_ALIGN, MIN_RR, REGIME_MODE,
+                    SIGNAL_VALID_MINUTES, TRADE_EXPIRY_MINUTES)
 
 # ==========================================================================
 # SCORE WEIGHTS
@@ -60,8 +61,6 @@ VOLUME_MIN_RATIO = 0.85
 VOLUME_SPIKE_RATIO = 1.05
 VWAP_SESSION_BARS = 288      # 5m candles pe ~24 ghante
 
-SIGNAL_VALID_MINUTES = 8
-
 STRICT_BULL = {"Strong Bullish", "Bullish"}
 STRICT_BEAR = {"Strong Bearish", "Bearish"}
 
@@ -97,7 +96,8 @@ def _empty_result(reason="Not enough candles"):
         "buy_confirmations": 0, "sell_confirmations": 0,
         "buy_directional": 0, "sell_directional": 0,
         "unavailable": [], "reasons": [reason],
-        "valid_minutes": SIGNAL_VALID_MINUTES, "atr_value": 0,
+        "valid_minutes": SIGNAL_VALID_MINUTES,
+        "max_hold_minutes": TRADE_EXPIRY_MINUTES, "atr_value": 0,
         "entry": None, "sl": None, "tp1": None, "tp2": None, "tp3": None,
         "risk_reward": "-", "risk_per_unit": None,
     }
@@ -292,7 +292,10 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     # on hain -- baaki off, kyunki sab ek saath on karne pe signals
     # lagbhag zero ho jaate hain.
     # ======================================================================
+    # quality_fails  = non-directional gates -> dono sides mar jaate hain
+    # side_fails     = directional gates     -> SIRF apni side marti hai
     quality_fails = []
+    side_fails = []
 
     if REGIME_MODE == "strict":
         if regime["regime"] != "Trending":
@@ -302,12 +305,21 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
             quality_fails.append(f"Regime: {regime['regime']}")
 
     if REQUIRE_HTF_ALIGN:
+        # BUG FIX: ye pehle quality_fails mein jaata tha, aur neeche
+        # `if quality_fails: buy_qualifies = sell_qualifies = False` DONO ko
+        # maar deta tha. Yaani agar BUY aur SELL dono qualify karein aur
+        # sirf BUY 15m trend ke khilaf ho, to bilkul sahi aur HTF-aligned
+        # SELL bhi zaya ho jaata tha -- aur neeche wala conflict resolution
+        # (jo score compare karta hai) chalta hi nahi tha.
+        # HTF ek DIRECTIONAL gate hai, isliye sirf apni side ko marega.
         htf_bull = trend15 in bullish_trends
         htf_bear = trend15 in bearish_trends
         if buy_qualifies and not htf_bull:
-            quality_fails.append("15m trend BUY ke saath nahi")
+            buy_qualifies = False
+            side_fails.append("15m trend BUY ke saath nahi")
         if sell_qualifies and not htf_bear:
-            quality_fails.append("15m trend SELL ke saath nahi")
+            sell_qualifies = False
+            side_fails.append("15m trend SELL ke saath nahi")
 
     if REQUIRE_BOS and not smc["bos"]:
         quality_fails.append("No Break of Structure")
@@ -370,8 +382,9 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         final_signal = "NO TRADE"
         if conflict_note:
             reasons = [conflict_note]
-        elif quality_fails:
-            reasons = [f"NO TRADE - quality filter: {', '.join(quality_fails)}"]
+        elif quality_fails or side_fails:
+            reasons = [f"NO TRADE - quality filter: "
+                       f"{', '.join(quality_fails + side_fails)}"]
         else:
             side_bull = buy_score >= sell_score
             checklist = {
@@ -495,7 +508,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         "order_block": smc["order_block"],
         "fvg": smc["fvg_direction"] if smc["fvg"] else "No",
         "premium_discount": smc["premium_discount"],
-        "quality_fails": quality_fails,
+        "quality_fails": quality_fails + side_fails,
         "pattern": pattern_name,
         "liquidity_sweep": smc["liquidity_side"] if smc["liquidity"] else "NO",
         "bollinger": bb_signal,
@@ -506,6 +519,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         "unavailable": unavailable_notes,
         "reasons": reasons,
         "valid_minutes": SIGNAL_VALID_MINUTES,
+        "max_hold_minutes": TRADE_EXPIRY_MINUTES,
         "atr_value": atr_value,
         **trade_levels,
     }

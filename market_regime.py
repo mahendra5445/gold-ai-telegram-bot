@@ -16,7 +16,7 @@ Teen alag measurements use hote hain (ek akela bharosemand nahi):
 
 import pandas as pd
 
-from indicators import adx, ema, bollinger_bands
+from indicators import adx, ema
 
 
 def _bb_width_percentile(close, period=20, lookback=100):

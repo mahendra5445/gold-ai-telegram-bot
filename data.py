@@ -152,6 +152,11 @@ def _fetch_tf_once(symbol: str, interval_key: str, label: str) -> dict:
         "volume":  volumes_f,
         "price":   closes_f[-1],
         "last_ts": last_ts,
+        # NAYA: har bar ka apna unix timestamp. Monitor ko chahiye taaki wo
+        # sirf UN bars ko dekhe jo pichhle check ke baad bane hain. Pehle
+        # sirf last_ts milta tha aur baaki bars ke time ka andaza lagana
+        # padta -- forex mein gaps hote hain, andaza galat hota hai.
+        "ts":      [r[5] for r in rows],
     }
 
 
@@ -396,6 +401,43 @@ def get_candles(asset: str = "gold") -> dict:
             "15m": tf15["close"],
         },
     }
+
+
+def get_1m_bars(asset: str = "gold", lookback: int = 60) -> list[dict]:
+    """
+    NAYA (monitor fix): aakhri `lookback` CLOSED 1-minute bars.
+
+    WAJAH: trade_monitor pehle har cycle mein ek single point price dekhta
+    tha. Agar do checks ke beech price TP ya SL ko touch karke wapas aa
+    gaya, bot ko pata hi nahi chalta tha -- trade open pada rehta tha aur
+    baad mein EXPIRED ho jaata tha. Isse stats systematically galat aate
+    the: jeetne wale trades gayab, expired ka dher.
+
+    Bars ke high/low se ye poora gap bhar jaata hai -- har minute ka
+    poora range dikhta hai, sirf ek snapshot nahi.
+
+    Return: [{"ts", "high", "low", "close"}, ...] purane se naye order mein.
+    Sabse nayi (abhi ban rahi) candle isme NAHI hai -- _fetch_tf_once use
+    drop kar deta hai, kyunki uska high/low abhi final nahi hai.
+    """
+    tf = get_asset_tf(asset, "1min")
+    highs, lows, closes = tf["high"], tf["low"], tf["close"]
+    stamps = tf.get("ts") or []
+
+    n = min(lookback, len(closes), len(highs), len(lows))
+    if n <= 0:
+        return []
+
+    start = len(closes) - n
+    bars = []
+    for i in range(start, len(closes)):
+        bars.append({
+            "ts":    stamps[i] if i < len(stamps) else None,
+            "high":  highs[i],
+            "low":   lows[i],
+            "close": closes[i],
+        })
+    return bars
 
 
 # ── LIVE SPREAD (Feature #11) ────────────────────────────────────────────

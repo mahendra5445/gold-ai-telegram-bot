@@ -13,23 +13,33 @@ import asyncio
 import logging
 import time
 
-from config import ASSETS, ASSET_LIST, SPREAD_FILTER_ENABLED, MAX_SPREAD_MULT
+from config import (ASSETS, ASSET_LIST, SPREAD_FILTER_ENABLED, MAX_SPREAD_MULT,
+                    SIGNAL_CYCLE_MINUTES, SIGNAL_COOLDOWN_MINUTES)
 from data import get_candles, get_latest_price, get_live_spread
 from formatter import format_signal
 from news import is_high_impact_news
 from risk import calculate_trade
 from shared_state import trade_lock, heartbeat
 from strategy import get_signal
-from trade_tracker import has_open_trade, save_trade, can_trade_today
+from trade_tracker import (has_open_trade, save_trade, can_trade_today,
+                           minutes_since_last_signal)
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_COOLDOWN_SEC: int = 15 * 60
+SIGNAL_COOLDOWN_SEC: int = SIGNAL_COOLDOWN_MINUTES * 60
 
 _last_signal_time: dict[str, float] = {}
 
 
 def _in_cooldown(asset: str) -> bool:
+    # Pehle disk dekho -- restart ke baad memory khaali hoti hai par
+    # trade history rehti hai, aur cooldown wahin se recover ho jaata hai.
+    mins = minutes_since_last_signal(asset)
+    if mins is not None and mins < SIGNAL_COOLDOWN_MINUTES:
+        logger.info(f"[COOLDOWN] {asset.upper()} — "
+                    f"{SIGNAL_COOLDOWN_MINUTES - mins:.0f}m remaining (disk)")
+        return True
+
     last = _last_signal_time.get(asset)
     if last is None:
         return False
@@ -135,4 +145,4 @@ async def auto_signal_job(application) -> None:
                 logger.error(f"[AUTO] {asset.upper()} error: {e}")
 
         heartbeat["last_cycle"] = time.time()
-        await asyncio.sleep(900)
+        await asyncio.sleep(SIGNAL_CYCLE_MINUTES * 60)

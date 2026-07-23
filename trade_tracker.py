@@ -35,6 +35,15 @@ def _persist() -> None:
     save_trades_to_disk(_trades, _next_id)
 
 
+def persist_now() -> None:
+    """
+    NAYA: monitor ko chahiye. Wo har cycle mein trade pe `last_bar_ts` likhta
+    hai (kaun si candle tak dekh liya). Agar ye disk pe na jaaye to restart ke
+    baad monitor purani candles dobara scan karega.
+    """
+    _persist()
+
+
 def _trim_history() -> None:
     global _trades
     if len(_trades) <= MAX_TRADE_HISTORY:
@@ -121,6 +130,26 @@ def save_trade(result: dict, asset: str = "gold") -> dict | None:
     logger.info(f"[TRADE] Saved #{trade['id']} {asset.upper()} {signal} "
                 f"entry={trade['entry']} sl={trade['sl']} risk={trade['risk_per_unit']}")
     return trade
+
+
+def minutes_since_last_signal(asset: str) -> float | None:
+    """
+    NAYA: us asset ka aakhri signal kitne minute pehle bana tha -- DISK se.
+
+    BUG jo tha: auto_signal.py cooldown ko sirf memory mein rakhta tha
+    (_last_signal_time + time.monotonic()). Har restart/redeploy pe wo
+    khaali ho jaata tha, to deploy ke turant baad wahi signal dobara ja
+    sakta tha. Trade history disk pe hai hi -- wahi se poochh lo.
+    """
+    a = asset.lower()
+    times = [t["time"] for t in _trades if t["asset"].lower() == a]
+    if not times:
+        return None
+    try:
+        last = datetime.strptime(max(times), TIME_FMT)
+    except ValueError:
+        return None
+    return (datetime.now() - last).total_seconds() / 60.0
 
 
 def get_open_trades() -> list[dict]:

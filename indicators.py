@@ -9,8 +9,17 @@ def ema(values, period):
 def _wilder(series, period):
     """Wilder's smoothing = EWM with alpha 1/period. MT5/TradingView isi ko
     use karte hain. Pehle yahan simple rolling().mean() tha, isliye bot ke
-    RSI/ATR/ADX chart pe dikhne wale values se match nahi karte the."""
-    return series.ewm(alpha=1 / period, adjust=False).mean()
+    RSI/ATR/ADX chart pe dikhne wale values se match nahi karte the.
+
+    Cache _true_range wali wajah se hi hai: atr() aur adx() dono bilkul wahi
+    TR series aur wahi period maangte hain.
+    """
+    key = (id(series), period, len(series))
+    got = _cache_get(_W_CACHE, key, (series,))
+    if got is not None:
+        return got
+    return _cache_put(_W_CACHE, key, (series,),
+                      series.ewm(alpha=1 / period, adjust=False).mean())
 
 
 def rsi(values, period=14):
@@ -45,13 +54,49 @@ def macd(values):
     }
 
 
+# ── memo cache ────────────────────────────────────────────────────────────
+#
+# Profiler ne dikhaya: ek get_signal call mein _true_range CHAAR baar compute
+# hota tha -- atr(), atr_moving_average(), adx(), aur supertrend() sab apna
+# alag nikaalte the, hamesha wahi high/low/close pe. pd.Series banane ka
+# kharcha 400-element array pe asli math se zyada hai (109,536 Series
+# constructions sirf 672 signals ke liye).
+#
+# Cache SIRF object identity pe hit karta hai (`is`, `==` nahi), aur input
+# objects ka reference bhi rakhta hai -- isse id() dobara issue nahi ho
+# sakta jab tak entry cache mein hai. Yaani galat data milna namumkin hai.
+_TR_CACHE: dict = {}
+_W_CACHE: dict = {}
+_CACHE_MAX = 8
+
+
+def _cache_get(cache, key, guard):
+    hit = cache.get(key)
+    if hit is not None and all(a is b for a, b in zip(hit[0], guard)):
+        return hit[1]
+    return None
+
+
+def _cache_put(cache, key, guard, value):
+    if len(cache) >= _CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[key] = (guard, value)
+    return value
+
+
 def _true_range(high, low, close):
-    high, low, close = pd.Series(high), pd.Series(low), pd.Series(close)
-    return pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs(),
+    key = (id(high), id(low), id(close), len(close))
+    got = _cache_get(_TR_CACHE, key, (high, low, close))
+    if got is not None:
+        return got
+
+    h, l, c = pd.Series(high), pd.Series(low), pd.Series(close)
+    tr = pd.concat([
+        h - l,
+        (h - c.shift()).abs(),
+        (l - c.shift()).abs(),
     ], axis=1).max(axis=1)
+    return _cache_put(_TR_CACHE, key, (high, low, close), tr)
 
 
 def atr(high, low, close, period=14):
@@ -77,6 +122,10 @@ def adx(high, low, close, period=14):
     NOTE: values ab kaafi kam aayenge. ADX_MIN (strategy.py) isi hisaab se
     dobara calibrate karna hoga -- backtest se, guess se nahi.
     """
+    # NOTE: _true_range ko ORIGINAL objects dete hain (naye Series nahi),
+    # warna har call naya id() banata aur cache bekaar ho jaata.
+    tr_raw = _true_range(high, low, close)
+
     high, low, close = pd.Series(high), pd.Series(low), pd.Series(close)
 
     up_move = high.diff()
@@ -91,7 +140,7 @@ def adx(high, low, close, period=14):
         index=high.index,
     )
 
-    atr_w = _wilder(_true_range(high, low, close), period)
+    atr_w = _wilder(tr_raw, period)
     safe_atr = atr_w.replace(0, np.nan)
 
     plus_di = 100 * _wilder(plus_dm, period) / safe_atr
@@ -167,39 +216,48 @@ def atr_moving_average(high, low, close, atr_period=14, ma_period=20):
 
 
 def supertrend(high, low, close, period=10, multiplier=3):
-    """Stateful Supertrend. ATR ab Wilder-smoothed hai (baaki logic same)."""
+    """
+    Stateful Supertrend. ATR Wilder-smoothed hai.
+
+    SPEED FIX: logic bilkul wahi hai, par loop ab plain Python lists pe
+    chalta hai, pandas .iloc pe nahi. Pehle har iteration mein ~10 scalar
+    .iloc lookups hote the -- profiler ne dikhaya ki poore backtest ka
+    82% waqt SIRF is ek function mein ja raha tha (142,678 pandas index
+    calls sirf 32 supertrend calls ke liye).
+
+    Output identical hai -- sirf tez.
+    """
+    atr_series = _wilder(_true_range(high, low, close), period)   # original objects
     high_s, low_s, close_s = pd.Series(high), pd.Series(low), pd.Series(close)
-    atr_series = _wilder(_true_range(high_s, low_s, close_s), period)
 
     hl2 = (high_s + low_s) / 2
     basic_upper = hl2 + multiplier * atr_series
     basic_lower = hl2 - multiplier * atr_series
 
     start = atr_series.first_valid_index()
-    if start is None or start >= len(close_s) - 1:
+    n = len(close_s)
+    if start is None or start >= n - 1:
         return {"trend": "Neutral", "value": round(close[-1], 6)}
 
-    final_upper = basic_upper.copy()
-    final_lower = basic_lower.copy()
-    trend = ["Bullish"] * len(close_s)
-    trend[start] = "Bullish" if close_s.iloc[start] >= hl2.iloc[start] else "Bearish"
+    # pandas se bahar nikaalo -- yahi asli fix hai
+    c = close_s.tolist()
+    bu = basic_upper.tolist()
+    bl = basic_lower.tolist()
+    fu = list(bu)
+    fl = list(bl)
 
-    for i in range(start + 1, len(close_s)):
-        if basic_upper.iloc[i] < final_upper.iloc[i - 1] or close_s.iloc[i - 1] > final_upper.iloc[i - 1]:
-            final_upper.iloc[i] = basic_upper.iloc[i]
-        else:
-            final_upper.iloc[i] = final_upper.iloc[i - 1]
+    trend = ["Bullish"] * n
+    trend[start] = "Bullish" if c[start] >= hl2.iloc[start] else "Bearish"
 
-        if basic_lower.iloc[i] > final_lower.iloc[i - 1] or close_s.iloc[i - 1] < final_lower.iloc[i - 1]:
-            final_lower.iloc[i] = basic_lower.iloc[i]
-        else:
-            final_lower.iloc[i] = final_lower.iloc[i - 1]
+    for i in range(start + 1, n):
+        fu[i] = bu[i] if (bu[i] < fu[i - 1] or c[i - 1] > fu[i - 1]) else fu[i - 1]
+        fl[i] = bl[i] if (bl[i] > fl[i - 1] or c[i - 1] < fl[i - 1]) else fl[i - 1]
 
         if trend[i - 1] == "Bullish":
-            trend[i] = "Bearish" if close_s.iloc[i] < final_lower.iloc[i] else "Bullish"
+            trend[i] = "Bearish" if c[i] < fl[i] else "Bullish"
         else:
-            trend[i] = "Bullish" if close_s.iloc[i] > final_upper.iloc[i] else "Bearish"
+            trend[i] = "Bullish" if c[i] > fu[i] else "Bearish"
 
     last_trend = trend[-1]
-    last_value = final_lower.iloc[-1] if last_trend == "Bullish" else final_upper.iloc[-1]
+    last_value = fl[-1] if last_trend == "Bullish" else fu[-1]
     return {"trend": last_trend, "value": round(last_value, 6)}
