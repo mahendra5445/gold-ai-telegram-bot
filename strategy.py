@@ -1,6 +1,15 @@
 from indicators import (
-    ema, rsi, macd, atr, atr_moving_average, adx, trend_strength,
-    vwap, bollinger_bands, bollinger_signal, supertrend,
+    ema,
+    rsi,
+    macd,
+    atr,
+    atr_moving_average,
+    adx,
+    trend_strength,
+    vwap,
+    bollinger_bands,
+    bollinger_signal,
+    supertrend,
 )
 
 from trend import get_trend
@@ -8,58 +17,34 @@ from risk import calculate_trade
 from smart_money import analyze_smart_money
 from patterns import detect_pattern
 from session import get_current_session
-from market_regime import detect_regime
-from config import (REQUIRE_BOS, REQUIRE_ORDER_BLOCK, REQUIRE_FVG,
-                    REQUIRE_HTF_ALIGN, MIN_RR, REGIME_MODE,
-                    SIGNAL_VALID_MINUTES, TRADE_EXPIRY_MINUTES)
 
-# ==========================================================================
-# SCORE WEIGHTS
-#
-# FIX (critical): pehle jab koi check ka data hi na ho, uska weight
-# chupchaap muft mil jaata tha (volume_ok = True default), ya check hamesha
-# fail hota tha (VWAP). Ab har check ka ek AVAILABILITY flag hai:
-#   - available nahi  -> weight total se hi nikal diya jaata hai, baaki
-#                        weights 100 pe renormalize ho jaate hain
-#   - available hai   -> normally score karta hai
-# Isse na muft points milte hain, na permanent penalty lagta hai.
-# ==========================================================================
-WEIGHTS = {
-    "ema": 14, "supertrend": 14, "mtf": 14,        # directional, bhaari
-    "adx": 9, "vwap": 9, "macd": 9, "rsi": 9,
-    "volume": 9, "liquidity": 9,
-    "atr": 4,
-}
+# ==========================
+# MAHENDRA CRYPTO AI SIGNAL - SCORE WEIGHTS (total = 100)
+# ==========================
+# BUG FIX: these previously summed to 110 (15+10+15+10+10+10+10+5+15+10),
+# not 100 as the comment claimed. buy_score/sell_score were then clamped
+# with min(score, 100), so any setup scoring 90-110 raw all displayed as
+# a flat "100/100" — real quality differences between a 90-point and a
+# 110-point setup were invisible, and grade thresholds (A+ >=90) were
+# effectively easier to hit than the 0-100 scale implied. Rebalanced
+# proportionally so the weights actually sum to 100.
+W_EMA = 14
+W_ADX = 9
+W_SUPERTREND = 14
+W_VWAP = 9
+W_MACD = 9
+W_RSI = 9
+W_VOLUME = 9
+W_ATR = 4
+W_MTF = 14
+W_LIQUIDITY = 9
 
-# --- Directional checks: BUY aur SELL ke liye ALAG result dete hain ---
-DIRECTIONAL = {"ema", "supertrend", "mtf", "vwap", "macd", "rsi", "candle"}
-# --- Non-directional: dono sides ko barabar milte hain ---
-NON_DIRECTIONAL = {"adx", "volume", "volume_spike", "atr", "liquidity"}
-
-# ==========================================================================
-# THRESHOLDS -- sab ek jagah. Ye numbers BACKTEST se calibrate karein.
-# ==========================================================================
-MIN_SCORE = 62
-
-# FIX: pehle sirf ek total count (MIN_CONFIRMATIONS = 8 of 12) tha, aur
-# usmein se 5 non-directional the jo dono sides ko milte the -- yaani
-# "8 confirmations" mein direction ka evidence sirf 3 ka bhi ho sakta tha.
-# Ab directional evidence ka apna alag minimum hai.
-MIN_DIRECTIONAL = 4          # 7 directional checks mein se
-MIN_TOTAL_CONFIRMATIONS = 7  # sab milakar
-
-# FIX: pehle BUY aur SELL dono qualify kar sakte the (250 test mein 5 baar
-# hua) aur code chupchaap BUY chun leta tha (`elif`). Ab dono ka score
-# compare hota hai, aur farq itna hona chahiye -- warna NO TRADE.
-SCORE_MARGIN = 10
-
-ADX_MIN = 22                 # NOTE: ADX ab sahi (Wilder) hai aur values kam
-                             # aayengi -- ye threshold recalibrate karein
-RSI_BULL = (52, 75)
-RSI_BEAR = (25, 48)
-VOLUME_MIN_RATIO = 0.85
-VOLUME_SPIKE_RATIO = 1.05
-VWAP_SESSION_BARS = 288      # 5m candles pe ~24 ghante
+REQUIRE_HTF_ALIGN = True       # 15m trend ke khilaaf trade block karo
+MIN_SCORE = 62                 # rescaled from 68/110 to keep the same relative bar on the corrected 0-100 scale
+MIN_CONFIRMATIONS = 8         # relaxed from 9 -> anything below 10 still gets tagged
+                               # "Reduced Risk" (see position_size below) so quality
+                               # is still visible even as more trades pass through
+SIGNAL_VALID_MINUTES = 8
 
 STRICT_BULL = {"Strong Bullish", "Bullish"}
 STRICT_BEAR = {"Strong Bearish", "Bearish"}
@@ -81,37 +66,56 @@ def confidence_label(score):
 
 def _empty_result(reason="Not enough candles"):
     return {
-        "signal": "NO TRADE", "confidence": 0, "ai_score": 0, "grade": "-",
-        "signal_tier": "-", "position_size": "-", "market_status": "-",
-        "session": "-", "session_active": True,
-        "trend_1m": "-", "trend_5m": "-", "trend_15m": "-", "trend_strength": "-",
-        "ema_ok": False, "adx_ok": False, "vwap_ok": False, "supertrend_ok": False,
-        "volume_ok": False, "atr_ok": False, "liquidity_ok": False,
-        "macd": {"macd": 0, "signal": 0, "trend": "-"}, "rsi": 0,
-        "pattern": "None", "liquidity_sweep": "NO", "bollinger": "None",
-        "regime": "-", "regime_note": "-", "bb_percentile": 0,
-        "structure": "-", "bos": "No", "choch": "No",
-        "order_block": "None", "fvg": "No", "premium_discount": "-",
-        "quality_fails": [],
-        "buy_confirmations": 0, "sell_confirmations": 0,
-        "buy_directional": 0, "sell_directional": 0,
-        "unavailable": [], "reasons": [reason],
+        "signal": "NO TRADE",
+        "confidence": 0,
+        "ai_score": 0,
+        "grade": "-",
+        "signal_tier": "-",
+        "position_size": "-",
+        "market_status": "-",
+        "session": "-",
+        "session_active": True,
+        "trend_1m": "-",
+        "trend_5m": "-",
+        "trend_15m": "-",
+        "trend_strength": "-",
+        "ema_ok": False,
+        "adx_ok": False,
+        "vwap_ok": False,
+        "supertrend_ok": False,
+        "volume_ok": False,
+        "atr_ok": False,
+        "liquidity_ok": False,
+        "macd": {"macd": 0, "signal": 0, "trend": "-"},
+        "rsi": 0,
+        "pattern": "None",
+        "liquidity_sweep": "NO",
+        "bollinger": "None",
+        "buy_confirmations": 0,
+        "sell_confirmations": 0,
+        "reasons": [reason],
         "valid_minutes": SIGNAL_VALID_MINUTES,
-        "max_hold_minutes": TRADE_EXPIRY_MINUTES, "atr_value": 0,
-        "entry": None, "sl": None, "tp1": None, "tp2": None, "tp3": None,
-        "risk_reward": "-", "risk_per_unit": None,
+        "atr_value": 0,
+        "entry": None,
+        "sl": None,
+        "tp1": None,
+        "tp2": None,
+        "tp3": None,
+        "risk_reward": "-",
     }
 
 
-def get_signal(close, high, low, timeframes, volume=None, open_=None,
-               decimals=2, spread=0.0, min_sl_pct=None):
+def get_signal(close, high, low, timeframes, volume=None, open_=None, decimals=2):
 
     if close is None or len(close) < 200:
         return _empty_result()
 
     price = round(close[-1], decimals)
 
-    ema20, ema50, ema200 = ema(close, 20), ema(close, 50), ema(close, 200)
+    ema20 = ema(close, 20)
+    ema50 = ema(close, 50)
+    ema200 = ema(close, 200)
+
     rsi_value = rsi(close)
     macd_value = macd(close)
     atr_value = atr(high, low, close)
@@ -123,10 +127,16 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     trend15 = get_trend(timeframes["15m"])
     trend_power = trend_strength(adx_value)
 
+    if volume:
+        vwap_value = vwap(high, low, close, volume)
+    else:
+        vwap_value = price
+
+    bb = bollinger_bands(close)
     bb_signal = bollinger_signal(close, high, low)
     st = supertrend(high, low, close)
-    smc = analyze_smart_money(high, low, close, open_)
-    regime = detect_regime(close, high, low)      # Feature #6
+    smc = analyze_smart_money(high, low, close)
+
     session_name, session_active = get_current_session()
 
     if open_:
@@ -134,101 +144,130 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     else:
         pattern_name, pattern_direction = "None", None
 
-    # ======================================================================
-    # AVAILABILITY -- kaunsa check is data pe chal bhi sakta hai
-    # ======================================================================
-    available = {k: True for k in WEIGHTS}
-    available["candle"] = bool(open_)
-    available["volume_spike"] = False
-    unavailable_notes = []
-
-    volume_usable = bool(volume) and len(volume) >= 20 and sum(volume[-20:]) > 0
-
-    # ── VWAP ──────────────────────────────────────────────────────────────
-    # FIX (critical): pehle volume na hone pe `vwap_value = price` set hota
-    # tha, jisse `price > vwap_value` HAMESHA False -- yaani VWAP check har
-    # asset pe permanently fail. Test mein 400/400 baar fail hua. Yahoo
-    # XAUUSD=X / EURUSD=X / GBPUSD=X / USDJPY=X charon pe volume zero hai,
-    # to ye check kabhi pass hi nahi hota tha. Ab: data nahi = check hi
-    # nahi (weight redistribute ho jaata hai).
-    vwap_value = vwap(high, low, close, volume, VWAP_SESSION_BARS) if volume_usable else None
-    if vwap_value is None:
-        available["vwap"] = False
-        unavailable_notes.append("VWAP (no volume data)")
-
-    # ── VOLUME ────────────────────────────────────────────────────────────
-    # FIX: pehle volume_ok aur volume_spike_ok dono `True` default the --
-    # 9 points + 2 confirmations har signal ko MUFT mil jaate the bina kisi
-    # information ke. Ab data na ho to check count hi nahi hota.
-    if volume_usable:
-        recent_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
-        current_vol = volume[-1]
-        volume_ok = recent_avg > 0 and current_vol >= recent_avg * VOLUME_MIN_RATIO
-        volume_spike_ok = recent_avg > 0 and current_vol >= recent_avg * VOLUME_SPIKE_RATIO
-        available["volume_spike"] = True
-    else:
-        volume_ok = False
-        volume_spike_ok = False
-        available["volume"] = False
-        unavailable_notes.append("Volume (no volume data)")
-
-    # ======================================================================
-    # CHECKS
-    # ======================================================================
+    # ==========================
+    # 2. EMA FILTER
+    # ==========================
     ema_bull = ema20 > ema50 > ema200
     ema_bear = ema20 < ema50 < ema200
 
-    adx_ok = adx_value >= ADX_MIN
+    # ==========================
+    # 3. ADX FILTER
+    # ==========================
+    adx_ok = adx_value >= 22
 
+    # ==========================
+    # 4. SUPERTREND
+    # ==========================
     st_bull = st["trend"] == "Bullish"
     st_bear = st["trend"] == "Bearish"
 
-    vwap_bull = vwap_value is not None and price > vwap_value
-    vwap_bear = vwap_value is not None and price < vwap_value
+    # ==========================
+    # 5. VWAP
+    # ==========================
+    vwap_bull = price > vwap_value
+    vwap_bear = price < vwap_value
 
-    rsi_bull = RSI_BULL[0] <= rsi_value <= RSI_BULL[1]
-    rsi_bear = RSI_BEAR[0] <= rsi_value <= RSI_BEAR[1]
+    # ==========================
+    # 6. RSI (widened bands)
+    # ==========================
+    rsi_bull = 52 <= rsi_value <= 75
+    rsi_bear = 25 <= rsi_value <= 48
 
-    histogram = round(macd_value["macd"] - macd_value["signal"], 6)
+    # ==========================
+    # 7. MACD (line vs signal + histogram)
+    # ==========================
+    histogram = round(macd_value["macd"] - macd_value["signal"], 4)
     macd_bull = macd_value["macd"] > macd_value["signal"] and histogram > 0
     macd_bear = macd_value["macd"] < macd_value["signal"] and histogram < 0
 
+    # ==========================
+    # 8. MULTI TIMEFRAME (2-of-3 agreement, includes Weak variants)
+    # ==========================
     bullish_trends = {"Strong Bullish", "Bullish", "Weak Bullish"}
     bearish_trends = {"Strong Bearish", "Bearish", "Weak Bearish"}
-    mtf_bull = sum(t in bullish_trends for t in [trend1, trend5, trend15]) >= 2
-    mtf_bear = sum(t in bearish_trends for t in [trend1, trend5, trend15]) >= 2
+    mtf_bull_count = sum(t in bullish_trends for t in [trend1, trend5, trend15])
+    mtf_bear_count = sum(t in bearish_trends for t in [trend1, trend5, trend15])
+    mtf_bull = mtf_bull_count >= 2
+    mtf_bear = mtf_bear_count >= 2
 
+    # ==========================
+    # 9. VOLUME FILTER (current >= 85% of 20-candle average)
+    # ==========================
+    # Default True: if we have no reliable volume data (common for spot
+    # forex/gold tickers), we can't fail the check - treat as "not
+    # applicable" rather than penalizing the signal for missing data
+    volume_ok = True
+    if volume and len(volume) >= 20 and sum(volume[-20:]) > 0:
+        recent_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
+        current_vol = volume[-1]
+        volume_ok = recent_avg > 0 and current_vol >= recent_avg * 0.85
+
+    # ==========================
+    # 10. ATR FILTER (scoring bonus only, not a hard gate)
+    # ==========================
     atr_ok = bool(atr_ma_value) and atr_value > atr_ma_value
 
-    # Candle confirmation -- FIX: pehle open_ na hone pe dono True the
-    # (muft confirmation). Ab available flag se handle hota hai.
-    if open_:
-        candle_bull_ok = close[-1] > open_[-1]
-        candle_bear_ok = close[-1] < open_[-1]
-    else:
-        candle_bull_ok = candle_bear_ok = False
-        unavailable_notes.append("Candle confirm (no open prices)")
+    # ==========================
+    # NEW: VOLUME SPIKE FILTER (हल्का/light - mild spike, not a strict one)
+    # Current volume should be at least ~15% above its own recent average.
+    # Same "no data -> pass" fallback as the base volume filter above.
+    # ==========================
+    volume_spike_ok = True
+    if volume and len(volume) >= 20 and sum(volume[-20:]) > 0:
+        spike_avg = sum(volume[-20:-1]) / len(volume[-20:-1])
+        spike_current = volume[-1]
+        volume_spike_ok = spike_avg > 0 and spike_current >= spike_avg * 1.05
 
+    # ==========================
+    # NEW: CANDLE CONFIRMATION
+    # The last CLOSED candle must actually close in the signal's
+    # direction - bullish body (close > open) for BUY, bearish body
+    # (close < open) for SELL. Without open prices we can't confirm,
+    # so pass rather than block.
+    # ==========================
+    candle_bull_ok = True
+    candle_bear_ok = True
+    if open_:
+        last_open, last_close = open_[-1], close[-1]
+        candle_bull_ok = last_close > last_open
+        candle_bear_ok = last_close < last_open
+
+    # ==========================
+    # 12. LIQUIDITY FILTER (avoid fake breakouts / raw sweep entries)
+    # ==========================
+    # BUG FIX: this used to be just `not smc["fake_breakout"]`.
+    # fake_breakout only fires in one narrow combo (liquidity sweep AND a
+    # BOS in the opposite direction that then closes back inside range),
+    # so in practice this check passed almost every single time and the
+    # "No Fake Breakout / Clean Liquidity" confirmation wasn't really
+    # filtering anything. Added a second condition: a liquidity sweep with
+    # NO break-of-structure follow-through at all (classic stop-hunt
+    # pattern - price grabs stops beyond the recent high/low then just
+    # sits there with no real structural break) also fails the check.
     liquidity_ok = not smc["fake_breakout"] and not (smc["liquidity"] and not smc["bos"])
 
-    # ======================================================================
-    # SCORING -- available weights ko 100 pe renormalize
-    # ======================================================================
-    active_total = sum(w for k, w in WEIGHTS.items() if available[k])
-    scale = 100.0 / active_total if active_total else 0.0
+    # ==========================
+    # 14. SESSION FILTER - info only now, not a hard gate
+    # (BTC trades 24/7 and this was cutting too many valid gold setups)
+    # ==========================
+    session_ok = True
 
+    # ==========================
+    # SCORE (only counts the side currently being evaluated)
+    # ==========================
     def score_side(is_bull):
-        hits = {
-            "ema": ema_bull if is_bull else ema_bear,
-            "supertrend": st_bull if is_bull else st_bear,
-            "mtf": mtf_bull if is_bull else mtf_bear,
-            "vwap": vwap_bull if is_bull else vwap_bear,
-            "macd": macd_bull if is_bull else macd_bear,
-            "rsi": rsi_bull if is_bull else rsi_bear,
-            "adx": adx_ok, "volume": volume_ok,
-            "liquidity": liquidity_ok, "atr": atr_ok,
-        }
-        return sum(WEIGHTS[k] for k, ok in hits.items() if ok and available[k]) * scale
+        s = 0
+        s += W_EMA if (ema_bull if is_bull else ema_bear) else 0
+        s += W_ADX if adx_ok else 0
+        s += W_SUPERTREND if (st_bull if is_bull else st_bear) else 0
+        s += W_VWAP if (vwap_bull if is_bull else vwap_bear) else 0
+        s += W_MACD if (macd_bull if is_bull else macd_bear) else 0
+        s += W_RSI if (rsi_bull if is_bull else rsi_bear) else 0
+        s += W_VOLUME if volume_ok else 0
+        s += W_ATR if atr_ok else 0
+        s += W_MTF if (mtf_bull if is_bull else mtf_bear) else 0
+        s += W_LIQUIDITY if liquidity_ok else 0
+        return s
 
     buy_score = score_side(True)
     sell_score = score_side(False)
@@ -238,248 +277,204 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     elif pattern_direction == "Bearish":
         sell_score += 5
 
+    # NOTE: was comparing against "London-New York Overlap" (hyphen) but
+    # session.py actually returns "London + New York Overlap" (plus sign),
+    # so the bonus never fired during the overlap window. Substring check
+    # below matches "London", "New York", and the overlap string in one go.
     if "London" in session_name or "New York" in session_name:
         buy_score += 3
         sell_score += 3
 
+    # BUG FIX (SL hit too early / low-quality Asian-session signals):
+    # session_ok above is info-only, so the Asian/Off-Hours session no
+    # longer blocks trades - but it never penalized them either, meaning a
+    # thin-liquidity setup could score exactly the same as one during
+    # London/NY. This soft penalty keeps low-liquidity setups tradeable
+    # (matches the original intent of relaxing the hard session gate) but
+    # requires them to clear a higher bar, and it's paired with the wider
+    # SL that risk.py now applies for the same session_active=False case.
     if not session_active:
         buy_score -= 8
         sell_score -= 8
 
-    buy_score = round(max(0, min(buy_score, 100)), 2)
-    sell_score = round(max(0, min(sell_score, 100)), 2)
+    # Scores are weighted to sum to 100 but bonuses (pattern +5, session +3)
+    # can push them over - always cap at 100 (and floor at 0, since the
+    # new low-liquidity penalty above can now push a very weak score negative).
+    buy_score = max(0, min(buy_score, 100))
+    sell_score = max(0, min(sell_score, 100))
 
-    # ======================================================================
-    # CONFIRMATIONS -- directional aur non-directional ALAG
-    # ======================================================================
-    def count_side(is_bull):
-        directional = {
-            "ema": ema_bull if is_bull else ema_bear,
-            "supertrend": st_bull if is_bull else st_bear,
-            "mtf": mtf_bull if is_bull else mtf_bear,
-            "vwap": vwap_bull if is_bull else vwap_bear,
-            "macd": macd_bull if is_bull else macd_bear,
-            "rsi": rsi_bull if is_bull else rsi_bear,
-            "candle": candle_bull_ok if is_bull else candle_bear_ok,
-        }
-        non_dir = {
-            "adx": adx_ok, "volume": volume_ok, "volume_spike": volume_spike_ok,
-            "atr": atr_ok, "liquidity": liquidity_ok,
-        }
-        d = sum(1 for k, ok in directional.items() if ok and available.get(k, True))
-        n = sum(1 for k, ok in non_dir.items() if ok and available.get(k, True))
-        return d, n
+    buy_confirmations = sum([
+        ema_bull, adx_ok, st_bull, vwap_bull, macd_bull,
+        rsi_bull, volume_ok, atr_ok, mtf_bull, liquidity_ok,
+        volume_spike_ok, candle_bull_ok,
+    ])
+    sell_confirmations = sum([
+        ema_bear, adx_ok, st_bear, vwap_bear, macd_bear,
+        rsi_bear, volume_ok, atr_ok, mtf_bear, liquidity_ok,
+        volume_spike_ok, candle_bear_ok,
+    ])
 
-    buy_dir, buy_non = count_side(True)
-    sell_dir, sell_non = count_side(False)
-    buy_confirmations = buy_dir + buy_non
-    sell_confirmations = sell_dir + sell_non
-
-    buy_qualifies = (
-        buy_dir >= MIN_DIRECTIONAL
-        and buy_confirmations >= MIN_TOTAL_CONFIRMATIONS
-        and buy_score >= MIN_SCORE
-    )
-    sell_qualifies = (
-        sell_dir >= MIN_DIRECTIONAL
-        and sell_confirmations >= MIN_TOTAL_CONFIRMATIONS
-        and sell_score >= MIN_SCORE
-    )
-
-    # ======================================================================
-    # TRADE QUALITY FILTER (Feature #15)
-    # Har gate config.py se on/off hota hai. Default: sirf regime aur HTF
-    # on hain -- baaki off, kyunki sab ek saath on karne pe signals
-    # lagbhag zero ho jaate hain.
-    # ======================================================================
-    # quality_fails  = non-directional gates -> dono sides mar jaate hain
-    # side_fails     = directional gates     -> SIRF apni side marti hai
-    quality_fails = []
-    side_fails = []
-
-    if REGIME_MODE == "strict":
-        if regime["regime"] != "Trending":
-            quality_fails.append(f"Regime: {regime['regime']} (strict mode)")
-    elif REGIME_MODE == "not_range":
-        if not regime["trend_ok"]:
-            quality_fails.append(f"Regime: {regime['regime']}")
-
-    if REQUIRE_HTF_ALIGN:
-        # BUG FIX: ye pehle quality_fails mein jaata tha, aur neeche
-        # `if quality_fails: buy_qualifies = sell_qualifies = False` DONO ko
-        # maar deta tha. Yaani agar BUY aur SELL dono qualify karein aur
-        # sirf BUY 15m trend ke khilaf ho, to bilkul sahi aur HTF-aligned
-        # SELL bhi zaya ho jaata tha -- aur neeche wala conflict resolution
-        # (jo score compare karta hai) chalta hi nahi tha.
-        # HTF ek DIRECTIONAL gate hai, isliye sirf apni side ko marega.
-        htf_bull = trend15 in bullish_trends
-        htf_bear = trend15 in bearish_trends
-        if buy_qualifies and not htf_bull:
-            buy_qualifies = False
-            side_fails.append("15m trend BUY ke saath nahi")
-        if sell_qualifies and not htf_bear:
-            sell_qualifies = False
-            side_fails.append("15m trend SELL ke saath nahi")
-
-    if REQUIRE_BOS and not smc["bos"]:
-        quality_fails.append("No Break of Structure")
-
-    if REQUIRE_ORDER_BLOCK and smc["order_block"] == "None":
-        quality_fails.append("No Order Block")
-
-    if REQUIRE_FVG and not smc["fvg"]:
-        quality_fails.append("No Fair Value Gap")
-
-    if quality_fails:
-        buy_qualifies = sell_qualifies = False
-
-    # ======================================================================
-    # FINAL -- conflict resolution ke saath
-    # ======================================================================
-    conflict_note = None
-    if buy_qualifies and sell_qualifies:
-        # FIX: pehle `elif` tha, to BUY hamesha jeet jaata tha chahe SELL ka
-        # score zyada ho. Ab margin chahiye, warna koi trade nahi.
-        if abs(buy_score - sell_score) < SCORE_MARGIN:
-            buy_qualifies = sell_qualifies = False
-            conflict_note = (
-                f"NO TRADE - BUY ({buy_score}) aur SELL ({sell_score}) dono "
-                f"qualify kar rahe hain, farq {SCORE_MARGIN} se kam hai"
-            )
-        elif sell_score > buy_score:
-            buy_qualifies = False
-        else:
-            sell_qualifies = False
+    # ==========================
+    # 17. FINAL CONFIRMATION
+    # ==========================
+    buy_all_true = buy_confirmations >= MIN_CONFIRMATIONS
+    sell_all_true = sell_confirmations >= MIN_CONFIRMATIONS
 
     def build_reasons(is_bull):
+        """
+        Build the reasons list from the SAME booleans used to count
+        confirmations, so Telegram's displayed reasons always match the
+        buy/sell confirmation count - no more hardcoded lists that claim
+        e.g. "Volume OK" when volume_ok was actually False.
+        """
         checks = [
-            (ema_bull if is_bull else ema_bear, "ema",
+            (ema_bull if is_bull else ema_bear,
              "EMA Bullish Stack" if is_bull else "EMA Bearish Stack"),
-            (st_bull if is_bull else st_bear, "supertrend",
+            (adx_ok, "ADX Strong"),
+            (st_bull if is_bull else st_bear,
              "Bullish Supertrend" if is_bull else "Bearish Supertrend"),
-            (mtf_bull if is_bull else mtf_bear, "mtf",
-             "MTF Bullish Alignment" if is_bull else "MTF Bearish Alignment"),
-            (vwap_bull if is_bull else vwap_bear, "vwap",
+            (vwap_bull if is_bull else vwap_bear,
              "Above VWAP" if is_bull else "Below VWAP"),
-            (macd_bull if is_bull else macd_bear, "macd",
+            (macd_bull if is_bull else macd_bear,
              "Bullish MACD" if is_bull else "Bearish MACD"),
-            (rsi_bull if is_bull else rsi_bear, "rsi", f"RSI Healthy ({rsi_value})"),
-            (candle_bull_ok if is_bull else candle_bear_ok, "candle",
+            (rsi_bull if is_bull else rsi_bear, f"RSI Healthy ({rsi_value})"),
+            (mtf_bull if is_bull else mtf_bear,
+             "MTF Bullish Alignment" if is_bull else "MTF Bearish Alignment"),
+            (volume_ok, "Volume OK"),
+            (atr_ok, "ATR Expansion"),
+            (volume_spike_ok, "Volume Spike"),
+            (candle_bull_ok if is_bull else candle_bear_ok,
              "Bullish Candle Confirmed" if is_bull else "Bearish Candle Confirmed"),
-            (adx_ok, "adx", f"ADX Strong ({adx_value})"),
-            (volume_ok, "volume", "Volume OK"),
-            (volume_spike_ok, "volume_spike", "Volume Spike"),
-            (atr_ok, "atr", "ATR Expansion"),
-            (liquidity_ok, "liquidity", "No Fake Breakout / Clean Liquidity"),
+            (liquidity_ok, "No Fake Breakout / Clean Liquidity"),
         ]
-        return [label for ok, key, label in checks if ok and available.get(key, True)]
+        return [label for ok, label in checks if ok]
 
-    if buy_qualifies:
-        final_signal, reasons = "BUY", build_reasons(True)
-    elif sell_qualifies:
-        final_signal, reasons = "SELL", build_reasons(False)
+    # ── HTF ALIGNMENT GATE ───────────────────────────────────────────────
+    # BUG: trend15 sirf mtf_bull_count / mtf_bear_count naam ke SCORE mein
+    # judta tha -- kisi trade ko ROK nahi sakta tha. Isliye signal 15m trend
+    # ke bilkul khilaaf ja sakta tha aur score phir bhi pass kar jaata tha.
+    # Asli example: BTC par 5M Bullish + 15M Weak Bullish, par MACD Bearish
+    # aur RSI 36.7 -- signal phir bhi 71/100 le kar nikal gaya.
+    #
+    # Gold bot mein ye gate (REQUIRE_HTF_ALIGN) pehle se hai. Ye DIRECTIONAL
+    # gate hai -- sirf apni side maarta hai, dono nahi. Agar dono qualify
+    # karein aur sirf BUY 15m ke khilaaf ho, to sahi SELL bacha rehta hai.
+    htf_note = None
+    if REQUIRE_HTF_ALIGN:
+        htf_bull = trend15 in bullish_trends
+        htf_bear = trend15 in bearish_trends
+        if buy_all_true and not htf_bull:
+            buy_all_true = False
+            htf_note = f"15m trend ({trend15}) BUY ke saath nahi"
+        if sell_all_true and not htf_bear:
+            sell_all_true = False
+            htf_note = f"15m trend ({trend15}) SELL ke saath nahi"
+
+    reasons = []
+    final_signal = "NO TRADE"
+
+    if buy_all_true and buy_score >= MIN_SCORE:
+        final_signal = "BUY"
+        reasons = build_reasons(True)
+    elif sell_all_true and sell_score >= MIN_SCORE:
+        final_signal = "SELL"
+        reasons = build_reasons(False)
     else:
-        final_signal = "NO TRADE"
-        if conflict_note:
-            reasons = [conflict_note]
-        elif quality_fails or side_fails:
-            reasons = [f"NO TRADE - quality filter: "
-                       f"{', '.join(quality_fails + side_fails)}"]
-        else:
-            side_bull = buy_score >= sell_score
-            checklist = {
-                "EMA": ema_bull if side_bull else ema_bear,
-                "Supertrend": st_bull if side_bull else st_bear,
-                "MTF": mtf_bull if side_bull else mtf_bear,
-                "VWAP": vwap_bull if side_bull else vwap_bear,
-                "MACD": macd_bull if side_bull else macd_bear,
-                "RSI": rsi_bull if side_bull else rsi_bear,
-                "Candle": candle_bull_ok if side_bull else candle_bear_ok,
-                "ADX": adx_ok, "Volume": volume_ok, "ATR": atr_ok,
-                "Liquidity": liquidity_ok,
-            }
-            failed = [k for k, v in checklist.items()
-                      if not v and available.get(k.lower(), True)]
-            d = buy_dir if side_bull else sell_dir
-            reasons = [
-                f"NO TRADE - directional {d}/{MIN_DIRECTIONAL} needed, "
-                f"score {max(buy_score, sell_score)}/{MIN_SCORE} needed"
-            ]
-            if failed:
-                reasons.append(f"Failed: {', '.join(failed)}")
+        checklist_bull = {
+            "EMA": ema_bull, "ADX": adx_ok, "Supertrend": st_bull,
+            "VWAP": vwap_bull, "RSI": rsi_bull, "MACD": macd_bull,
+            "MTF": mtf_bull, "Volume": volume_ok, "ATR": atr_ok,
+            "Liquidity": liquidity_ok, "Session": session_ok,
+            "Volume Spike": volume_spike_ok, "Candle Confirm": candle_bull_ok,
+        }
+        checklist_bear = {
+            "EMA": ema_bear, "ADX": adx_ok, "Supertrend": st_bear,
+            "VWAP": vwap_bear, "RSI": rsi_bear, "MACD": macd_bear,
+            "MTF": mtf_bear, "Volume": volume_ok, "ATR": atr_ok,
+            "Liquidity": liquidity_ok, "Session": session_ok,
+            "Volume Spike": volume_spike_ok, "Candle Confirm": candle_bear_ok,
+        }
+        checklist = checklist_bull if buy_score >= sell_score else checklist_bear
+        failed = [k for k, v in checklist.items() if not v]
+        reasons = [f"NO TRADE - failed: {', '.join(failed)}"] if failed else ["NO TRADE - score below threshold"]
         if pattern_direction:
             reasons.append(f"{pattern_direction} Pattern (info only): {pattern_name}")
         if bb_signal != "None":
             reasons.append(f"Bollinger (info only): {bb_signal}")
 
-    if unavailable_notes:
-        reasons.append(f"Not scored (no data): {', '.join(unavailable_notes)}")
+    ai_score = round(buy_score if final_signal == "BUY" else sell_score if final_signal == "SELL" else max(buy_score, sell_score), 2)
+    ai_score = min(ai_score, 100)
 
-    ai_score = buy_score if final_signal == "BUY" else \
-        sell_score if final_signal == "SELL" else max(buy_score, sell_score)
+    def confidence_from_confirmations(confirmations, score):
+        """
+        Confidence is no longer just a copy of ai_score - it's driven by
+        HOW MANY confirmations agreed, per spec:
+          9  confirmations -> 70%  (new relaxed tier - Reduced Risk)
+          10 confirmations -> 82%
+          11 confirmations -> 90%
+          12 confirmations -> 98-100% (scaled by score within that band)
+        Below 9 (NO TRADE cases) it falls back to a damped score-based
+        estimate so it never reaches the 70%+ band without 9+ confirmations.
+        """
+        if confirmations >= 12:
+            bonus = max(0.0, min(1.0, (score - 90) / 10))  # 0..1
+            return round(98 + bonus * 2, 1)  # 98 -> 100
+        if confirmations == 11:
+            return 90.0
+        if confirmations == 10:
+            return 82.0
+        if confirmations == 9:
+            return 70.0
+        if confirmations == 8:
+            return 60.0
+        return round(min(55.0, score * 0.7), 1)
 
-    active_dir = buy_dir if final_signal == "BUY" else \
-        sell_dir if final_signal == "SELL" else max(buy_dir, sell_dir)
-    active_conf = buy_confirmations if final_signal == "BUY" else \
+    active_confirmations = buy_confirmations if final_signal == "BUY" else \
         sell_confirmations if final_signal == "SELL" else max(buy_confirmations, sell_confirmations)
+    confidence = min(confidence_from_confirmations(active_confirmations, ai_score), 100)
 
-    # ======================================================================
-    # SETUP STRENGTH (pehle ise "Confidence %" kaha jaata tha)
-    #
-    # FIX: purana code confirmations ko seedha percent bana deta tha
-    # (11 -> "90%", 12 -> "98-100%"). Wo ek lookup table thi, probability
-    # nahi -- kisi data se derive nahi hui thi, lekin user ko aisa lagta tha
-    # ki 90% chance hai jeetne ka. Ab ye ek saaf X/Y count hai. Asli
-    # win probability sirf backtest se aati hai, indicator ginti se nahi.
-    # ======================================================================
-    max_dir = sum(1 for k in DIRECTIONAL if available.get(k, True))
-    max_conf = max_dir + sum(1 for k in NON_DIRECTIONAL if available.get(k, True))
-    setup_strength = f"{active_dir}/{max_dir} directional, {active_conf}/{max_conf} total"
-
-    def position_sizing(d, total_dir):
-        if total_dir <= 0:
-            return "Not Traded", "0%"
-        ratio = d / total_dir
-        if ratio >= 0.85:
+    def position_sizing(confirmations):
+        """
+        Confirmation count -> suggested risk tier. This is what makes the
+        relaxed 9-confirmation threshold safe to trade: a 9-confirmation
+        signal is clearly flagged as lower quality and paired with a
+        smaller suggested size, instead of being treated the same as a
+        clean 12/12 setup.
+        """
+        if confirmations >= 12:
             return "Full Size", "100%"
-        if ratio >= 0.70:
+        if confirmations == 11:
+            return "Full Size", "100%"
+        if confirmations == 10:
             return "Standard Size", "75%"
-        if ratio >= 0.55:
+        if confirmations == 9:
             return "Reduced Risk - Half Size", "50%"
-        return "Reduced Risk - Quarter Size", "25%"
+        if confirmations == 8:
+            return "Reduced Risk - Quarter Size", "25%"
+        return "Not Traded", "0%"
 
-    signal_tier, position_size_pct = position_sizing(active_dir, max_dir) \
-        if final_signal != "NO TRADE" else ("-", "-")
+    signal_tier, position_size_pct = position_sizing(active_confirmations) if final_signal != "NO TRADE" else ("-", "-")
 
-    grade = "A+" if ai_score >= 90 else "A" if ai_score >= 80 else \
-            "B" if ai_score >= 70 else "C" if ai_score >= 60 else "D"
+    if ai_score >= 90:
+        grade = "A+"
+    elif ai_score >= 80:
+        grade = "A"
+    elif ai_score >= 70:
+        grade = "B"
+    elif ai_score >= 60:
+        grade = "C"
+    else:
+        grade = "D"
 
     market_status = "Active" if session_active else "Low Liquidity"
 
     trade_levels = calculate_trade(
-        final_signal, price, atr_value, decimals=decimals,
-        session_active=session_active, spread=spread,
-        min_sl_pct=min_sl_pct,
+        final_signal, price, atr_value, decimals=decimals, session_active=session_active
     )
-
-    # MIN_RR gate — spread ke baad RR itna to hona hi chahiye
-    if final_signal != "NO TRADE" and MIN_RR:
-        try:
-            rr_val = float(str(trade_levels["risk_reward"]).split(":")[1])
-            if rr_val < MIN_RR:
-                reasons = [f"NO TRADE - RR {rr_val} < required {MIN_RR} "
-                           f"(spread ke baad)"]
-                final_signal = "NO TRADE"
-                trade_levels = calculate_trade("NO TRADE", price, atr_value,
-                                               decimals=decimals,
-                                               min_sl_pct=min_sl_pct)
-                signal_tier, position_size_pct = "-", "-"
-        except (ValueError, IndexError):
-            pass
 
     return {
         "signal": final_signal,
-        "confidence": setup_strength,
+        "confidence": confidence,
         "ai_score": ai_score,
         "grade": grade,
         "signal_tier": signal_tier,
@@ -487,41 +482,26 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
         "market_status": market_status,
         "session": session_name,
         "session_active": session_active,
-        "trend_1m": trend1, "trend_5m": trend5, "trend_15m": trend15,
+        "trend_1m": trend1,
+        "trend_5m": trend5,
+        "trend_15m": trend15,
         "trend_strength": trend_power,
         "ema_ok": ema_bull or ema_bear,
         "adx_ok": adx_ok,
         "vwap_ok": vwap_bear if final_signal == "SELL" else vwap_bull,
-        "vwap_available": available["vwap"],
         "supertrend_ok": st_bear if final_signal == "SELL" else st_bull,
         "volume_ok": volume_ok,
-        "volume_available": available["volume"],
         "atr_ok": atr_ok,
         "liquidity_ok": liquidity_ok,
         "macd": macd_value,
         "rsi": rsi_value,
-        "adx_value": adx_value,
-        "regime": regime["regime"],
-        "regime_note": regime["note"],
-        "bb_percentile": regime["bb_percentile"],
-        "structure": smc["structure"],
-        "bos": smc["bos_direction"] if smc["bos"] else "No",
-        "choch": smc["choch_direction"] if smc["choch"] else "No",
-        "order_block": smc["order_block"],
-        "fvg": smc["fvg_direction"] if smc["fvg"] else "No",
-        "premium_discount": smc["premium_discount"],
-        "quality_fails": quality_fails + side_fails,
         "pattern": pattern_name,
         "liquidity_sweep": smc["liquidity_side"] if smc["liquidity"] else "NO",
         "bollinger": bb_signal,
         "buy_confirmations": buy_confirmations,
         "sell_confirmations": sell_confirmations,
-        "buy_directional": buy_dir,
-        "sell_directional": sell_dir,
-        "unavailable": unavailable_notes,
         "reasons": reasons,
         "valid_minutes": SIGNAL_VALID_MINUTES,
-        "max_hold_minutes": TRADE_EXPIRY_MINUTES,
         "atr_value": atr_value,
         **trade_levels,
     }

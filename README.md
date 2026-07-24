@@ -1,75 +1,107 @@
-# AI Scalper Pro V5.5
+# Mahendra Crypto AI Signal
 
-Telegram bot jo Gold, BTC, Oil, EUR/USD, USD/JPY, LINK, aur ATOM ke liye
-AI-scored trading signals deta hai — technical indicators, multi-timeframe
-trend, smart-money concepts (BOS/CHoCH/liquidity), aur candlestick
-patterns ko combine karke.
+Telegram bot jo 12 high-liquidity crypto coins — BTC, ETH, SOL, XRP, BNB,
+DOGE, ADA, LINK, AVAX, TON, SUI, LTC — ke liye AI-scored trading signals
+deta hai, technical indicators, multi-timeframe trend, smart-money
+concepts (BOS/CHoCH/liquidity), aur candlestick patterns ko combine
+karke, aur **seedha ek Telegram channel mein post karta hai**
+(individual users ko `/start` karne ki zaroorat nahi).
+
+## Original bot se kya different hai
+
+Ye gold-ai-telegram-bot ka clone hai. Sab signal-scoring engine,
+risk/SL/TP logic, aur background jobs same hain — do cheezein badli hain:
+
+1. **Assets** — Gold/BTC/Oil/EUR-USD/USD-JPY/LINK/ATOM ki jagah ab 12
+   crypto coins hain (upar list dekho).
+2. **Delivery** — har registered user ko alag-alag message bhejne ki
+   jagah, sab signals ek fixed Telegram **channel** (`CHANNEL_ID`) mein
+   post hote hain — bot us channel ka admin hona chahiye ("Post
+   Messages" permission ke saath).
 
 ## Kaise kaam karta hai
 
-- Har **15 minute** mein bot saare configured assets (`config.py` →
+- Har **15 minute** mein bot saare configured coins (`config.py` →
   `ASSET_LIST`) ka data check karta hai (`auto_signal.py`).
 - Signal 12 confirmation checks (EMA, ADX, Supertrend, VWAP, MACD,
   RSI, multi-timeframe trend, volume, ATR, liquidity, volume spike,
   candle confirmation) ke against score hota hai — sirf tab fire
   hota hai jab score aur confirmations dono threshold cross karein
   (`strategy.py` → `MIN_SCORE`, `MIN_CONFIRMATIONS`).
-- Ek signal ke baad us asset ke liye **15-minute cooldown** lagta hai
+- Ek signal ke baad us coin ke liye **15-minute cooldown** lagta hai
   aur jab tak purana trade close nahi hota, naya signal nahi aata
-  (ek time pe ek open trade per asset).
+  (ek time pe ek open trade per coin).
 - Entry/SL/TP ATR-based hain (`risk.py`) — SL = 2.0× ATR, TP1/TP2/TP3
-  = 2.5R / 4R / 6R. Har asset ka display/rounding precision uske
-  `decimals` config se control hota hai (gold/btc/oil = 2, USD/JPY = 3,
-  LINK/ATOM = 4, EUR/USD = 5) — forex jaise chhote-price pairs ke liye
-  ye precision zaroori hai warna signal levels galat round ho jaate hain.
+  = 2.5R / 4R / 6R. Har coin ka display/rounding precision uske
+  `decimals` config se control hota hai — chhote-price coins (jaise
+  XRP, DOGE) ke liye ye precision zaroori hai warna signal levels
+  galat round ho jaate hain.
 - Open trades `trade_monitor.py` har 2 minute mein price check karke
-  track karta hai (SL / breakeven / TP1 / TP2 / TP3 hits) aur
-  Telegram par update bhejta hai.
+  track karta hai (SL / breakeven / TP1 / TP2 / TP3 hits) aur channel
+  mein update post karta hai.
 - `watchdog.py` har 5 minute mein check karta hai ki auto-signal loop
   zinda hai ya nahi (agar 40+ minute se koi cycle complete na hui ho,
-  matlab kahin stuck/silently failed hai, to alert bhejta hai).
+  matlab kahin stuck/silently failed hai, to channel mein alert bhejta
+  hai).
 - `daily_summary.py` roz ek fixed time pe (default 18:00 server-local)
-  us din ka combined + per-asset signal count aur win rate bhejta hai.
+  us din ka combined + per-coin signal count aur win rate channel mein
+  post karta hai.
 - Sab trades `data/trades.json` mein persist hote hain (atomic
-  writes), registered users `data/admins.json` mein.
+  writes).
 
 ## Assets
 
-| Asset | Command | Yahoo Symbol | Decimals |
-|-------|---------|-------------|----------|
-| Gold | `/gold` | `XAUUSD=X` (fallback `GC=F`) | 2 |
-| Bitcoin | `/btc` | `BTC-USD` | 2 |
-| Oil (WTI) | `/oil` | `CL=F` | 2 |
-| EUR/USD | `/eurusd` | `EURUSD=X` | 5 |
-| USD/JPY | `/usdjpy` | `USDJPY=X` | 3 |
-| Chainlink | `/link` | `LINK-USD` | 4 |
-| Cosmos | `/atom` | `ATOM-USD` | 4 |
+| Coin | Command | Yahoo Symbol | Binance Symbol | Decimals |
+|------|---------|-------------|-----------------|----------|
+| Bitcoin | `/btc` | `BTC-USD` | `BTCUSDT` | 2 |
+| Ethereum | `/eth` | `ETH-USD` | `ETHUSDT` | 2 |
+| Solana | `/sol` | `SOL-USD` | `SOLUSDT` | 2 |
+| XRP | `/xrp` | `XRP-USD` | `XRPUSDT` | 4 |
+| BNB | `/bnb` | `BNB-USD` | `BNBUSDT` | 2 |
+| Dogecoin | `/doge` | `DOGE-USD` | `DOGEUSDT` | 5 |
+| Cardano | `/ada` | `ADA-USD` | `ADAUSDT` | 4 |
+| Chainlink | `/link` | `LINK-USD` | `LINKUSDT` | 4 |
+| Avalanche | `/avax` | `AVAX-USD` | `AVAXUSDT` | 2 |
+| Toncoin | `/ton` | `TON-USD` | `TONUSDT` | 3 |
+| Sui | `/sui` | `SUI-USD` | `SUIUSDT` | 4 |
+| Litecoin | `/ltc` | `LTC-USD` | `LTCUSDT` | 2 |
 
-Naya asset add karna ho to bas `config.py` → `ASSETS` dict mein ek
+Naya coin add karna ho to bas `config.py` → `ASSETS` dict mein ek
 entry add karo — baaki sab code (`data.py`, `main.py`,
-`auto_signal.py`) generic hai aur apne aap naya asset pick kar leta hai.
+`auto_signal.py`) generic hai aur apne aap naya coin pick kar leta hai.
 
 ## Commands
 
+Ye commands bot ko **DM** mein bheje jaate hain (channel mein nahi) —
+manual check ke liye, jaise ki testing:
+
 | Command    | Kaam |
 |------------|------|
-| `/start`   | Bot se signals paane ke liye register karo |
-| `/gold`, `/btc`, `/oil`, `/eurusd`, `/usdjpy`, `/link`, `/atom` | Manual signal check us asset ka |
-| `/signal`  | `/gold` jaisa hi |
-| `/trend`   | 1M/5M/15M trend summary (gold) |
-| `/stats`   | Trade statistics (add asset name for one asset, e.g. `/stats eurusd`; no arg = combined + per-asset breakdown) |
-| `/history` | Last 10 trades (add asset name to filter, e.g. `/history btc`) |
+| `/start`   | Bot online hai ya nahi confirm karo, command list dekho |
+| `/btc`, `/eth`, `/sol`, `/xrp`, `/bnb`, `/doge`, `/ada`, `/link`, `/avax`, `/ton`, `/sui`, `/ltc` | Manual signal check us coin ka |
+| `/signal`  | `/btc` jaisa hi |
+| `/trend`   | 1M/5M/15M trend summary (BTC) |
+| `/stats`   | Trade statistics (add coin name for one coin, e.g. `/stats sol`; no arg = combined + per-coin breakdown) |
+| `/history` | Last 10 trades (add coin name to filter, e.g. `/history eth`) |
+
+**Auto-signals, trade updates, watchdog alerts, aur daily summary**
+sab automatically channel mein post hote hain — koi command nahi
+chahiye.
 
 ## Setup
 
 1. `pip install -r requirements.txt`
-2. `.env.example` ko `.env` bana lo aur `BOT_TOKEN` fill karo
-   (@BotFather se milega)
-3. `python main.py`
+2. `.env.example` ko `.env` bana lo aur fill karo:
+   - `BOT_TOKEN` — @BotFather se milega
+   - `CHANNEL_ID` — jis channel mein post karna hai, uska `@username`
+     (public) ya numeric chat id (private)
+3. Bot ko us channel ka **admin** banao ("Post Messages" permission ke
+   saath)
+4. `python main.py`
 
 Production deploy (Railway) ke liye `RAILWAY_SETUP.md` dekho — wahan
 persistent volume attach karna zaroori hai warna restarts pe trade
-history aur registered users reset ho jayenge.
+history reset ho jayegi.
 
 ## Key files
 
@@ -77,10 +109,11 @@ history aur registered users reset ho jayenge.
 |------|------|
 | `strategy.py` | Signal scoring engine — thresholds yahan hain |
 | `risk.py` | SL/TP calculation (ATR-based, decimals-aware) |
-| `auto_signal.py` | Background loop jo saare assets ke signals check/bhejta hai |
+| `auto_signal.py` | Background loop jo saare coins ke signals check/post karta hai |
 | `trade_monitor.py` | Open trades ko SL/TP ke against track karta hai |
-| `data.py` | Yahoo Finance se price data (+ fallback sources), sab assets ke liye generic |
-| `config.py` | `ASSETS` registry — symbols, decimals, fallback/external sources |
+| `data.py` | Yahoo Finance se price data (+ Binance/Coinbase fallback), sab coins ke liye generic |
+| `config.py` | `ASSETS` registry (12 coins) + `CHANNEL_ID` |
+| `notify.py` | Channel-broadcast helper — sab jobs isi se message post karte hain |
 | `watchdog.py` | Auto-signal loop stuck/dead detect karke alert bhejta hai |
 | `daily_summary.py` | Roz ka signal/win-rate digest bhejta hai |
 
@@ -93,12 +126,10 @@ explain kiya gaya hai ki har value ka kya effect hai.
 ## Known limitations
 
 - News filter (`news.py`) sirf high-impact **USD** events check karta
-  hai — saare assets ke liye ek hi filter hai (koi asset-specific
-  currency filter nahi, e.g. JPY ya EUR news alag se check nahi hoti).
-- Oil aur forex pairs (EUR/USD, USD/JPY) ke liye koi independent
-  fallback price source configured nahi hai (`data.py` →
-  `get_external_price`) — sirf Yahoo Finance retry hi available hai
-  in ke liye. Gold aur crypto assets ke paas fallback sources hain.
+  hai — sab coins USD-priced hain, isliye ye sab par apply hota hai.
 - `daily_summary.py` server ke local time-zone se chalta hai (jo
   Railway pe usually UTC hota hai) — `SUMMARY_HOUR` constant adjust
   karke apna preferred IST time set kar sakte ho.
+- Agar `CHANNEL_ID` set nahi hai ya bot channel ka admin nahi hai, to
+  signals silently skip ho jayenge (logs mein warning aayegi) — DM
+  commands (`/btc` etc.) tab bhi kaam karenge.

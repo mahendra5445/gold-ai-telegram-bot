@@ -1,10 +1,12 @@
 """
 Bot entry point.
 
-Fixes applied:
- #13  Graceful restart        — Application.post_shutdown saves admins + logs exit.
- #14  Persistent admin list   — admins loaded from disk at startup; saved on every
-                                /start and on shutdown.
+Clone of the original multi-asset signal bot: instead of broadcasting to a
+list of registered users, this version posts every signal to a fixed
+Telegram channel (config.CHANNEL_ID) — see notify.py.
+
+Fixes applied (inherited from the original bot):
+ #13  Graceful restart        — Application.post_shutdown logs exit cleanly.
  #17  Proper logging          — setup_logging() configures rotating file + console
                                 before anything else runs.
 """
@@ -17,12 +19,11 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from auto_signal import auto_signal_job
-from config import ASSETS, BOT_TOKEN
+from config import ASSETS, BOT_TOKEN, CHANNEL_ID
 from daily_summary import daily_summary_job
 from data import get_candles, get_latest_price
 from formatter import format_signal
 from logger_setup import setup_logging
-from persistence import load_admins, save_admins
 from risk import calculate_trade
 from strategy import get_signal
 from trade_monitor import trade_monitor_job
@@ -39,13 +40,11 @@ logger = logging.getLogger(__name__)
 async def post_init(application: Application) -> None:
     """Runs after the bot is fully initialised but before polling starts."""
 
-    # Restore persisted admin list so users don't need to /start again
-    saved_admins = load_admins()
-    if saved_admins:
-        application.bot_data["admins"] = saved_admins
-        logger.info(f"[INIT] Restored {len(saved_admins)} admins from disk")
-    else:
-        application.bot_data.setdefault("admins", [])
+    if not CHANNEL_ID:
+        logger.warning(
+            "[INIT] CHANNEL_ID not set — signals won't be posted anywhere "
+            "until it's configured."
+        )
 
     # Launch background jobs as independent tasks.
     # BUG FIX: task references save karna zaroori hai — asyncio sirf weak
@@ -68,18 +67,13 @@ async def post_shutdown(application: Application) -> None:
     for task in application.bot_data.get("_bg_tasks", []):
         task.cancel()
 
-    admins = application.bot_data.get("admins", [])
-    save_admins(admins)
-    logger.info(f"[SHUTDOWN] Saved {len(admins)} admins. Goodbye.")
+    logger.info("[SHUTDOWN] Goodbye.")
 
 
 # ── command helpers ───────────────────────────────────────────────────────
 
-async def _build_result(candles: dict, asset: str = "gold") -> dict:
-    cfg = ASSETS[asset.lower()]
-    decimals = cfg["decimals"]
-    spread = cfg.get("spread", 0.0)
-    min_sl_pct = cfg.get("min_sl_pct")
+async def _build_result(candles: dict, asset: str = "btc") -> dict:
+    decimals = ASSETS[asset.lower()]["decimals"]
     result = get_signal(
         candles["close"],
         candles["high"],
@@ -88,8 +82,6 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
         candles.get("volume"),
         candles.get("open"),
         decimals=decimals,
-        spread=spread,
-        min_sl_pct=min_sl_pct,
     )
 
     # BUG FIX (MT5 price mismatch): manual /gold aur /btc commands mein
@@ -113,7 +105,6 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
                 calculate_trade(
                     result["signal"], live_price, result.get("atr_value", 0),
                     decimals=decimals, session_active=result.get("session_active", True),
-                    spread=spread, min_sl_pct=min_sl_pct,
                 )
             )
 
@@ -123,28 +114,21 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
 # ── command handlers ──────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    admins  = context.application.bot_data.setdefault("admins", [])
-
-    if chat_id not in admins:
-        admins.append(chat_id)
-        save_admins(admins)   # persist immediately
-        logger.info(f"[ADMIN] Registered new user {chat_id} ({len(admins)} total)")
-
     asset_lines = "\n".join(
         f"/{a}    — Manual {cfg['label']} signal" for a, cfg in ASSETS.items()
     )
 
     await update.message.reply_text(
-        "🤖 AI SCALPER PRO V5.5\n\n"
+        "🤖 MAHENDRA CRYPTO AI SIGNAL\n\n"
         "✅ Bot Online\n"
-        "📡 AI Signal Engine Active\n\n"
+        "📡 AI Signal Engine Active\n"
+        "📢 Auto signals are posted to the channel\n\n"
         "Commands:\n"
         f"{asset_lines}\n"
-        "/signal  — Same as /gold\n"
-        "/trend   — Trend summary (gold)\n"
-        "/stats   — Trade statistics (add asset name for one asset, e.g. /stats eurusd)\n"
-        "/history — Last 10 trades (add asset name to filter, e.g. /history btc)"
+        "/signal  — Same as /btc\n"
+        "/trend   — Trend summary (BTC)\n"
+        "/stats   — Trade statistics (add asset name for one asset, e.g. /stats sol)\n"
+        "/history — Last 10 trades (add asset name to filter, e.g. /history eth)"
     )
 
 
@@ -171,23 +155,19 @@ def _make_asset_handler(asset: str):
     return _handler
 
 
-# One handler per configured asset (dynamically created from ASSETS config)
+# One handler per configured asset (btc, eth, sol, xrp, bnb, doge, ada, …)
 _asset_handlers = {a: _make_asset_handler(a) for a in ASSETS}
-gold = _asset_handlers["gold"]
-# Dynamically create handlers for all configured assets (no hardcoded asset names)
-eurusd = _asset_handlers.get("eurusd")
-gbpusd = _asset_handlers.get("gbpusd")
-usdjpy = _asset_handlers.get("usdjpy")
+btc = _asset_handlers["btc"]
 
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await gold(update, context)
+    await btc(update, context)
 
 
 async def trend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        candles = await asyncio.to_thread(get_candles)
-        result  = await _build_result(candles)
+        candles = await asyncio.to_thread(get_candles, "btc")
+        result  = await _build_result(candles, "btc")
         await update.message.reply_text(
             f"📊 1M Trend      : {result['trend_1m']}\n"
             f"📊 5M Trend      : {result['trend_5m']}\n"
@@ -216,36 +196,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"❌ ERROR\n\n{type(e).__name__}: {e}")
 
 
-
-def _stats_block(title: str, s: dict) -> str:
-    """
-    NAYA: expectancy ab sabse upar hai, win rate ke neeche.
-    Expectancy = avg R per trade. YEHI batata hai strategy paisa banati hai
-    ya nahi. Win rate 80% ho sakta hai aur expectancy phir bhi negative --
-    agar jeetein chhoti aur haarein badi hon.
-    """
-    verdict = ("🟢 profitable is sample pe" if s["expectancy"] > 0.05 else
-               "🟡 flat — noise bhi ho sakta hai" if s["expectancy"] > 0 else
-               "🔴 paisa kho rahe hain")
-    return (
-        f"📊 {title}\n\n"
-        f"📈 Total Signals : {s['total']}  (open: {s['open']})\n"
-        f"🟢 BUY / 🔴 SELL : {s['buy']} / {s['sell']}\n"
-        f"✅ Closed        : {s['closed']}\n\n"
-        f"💰 EXPECTANCY    : {s['expectancy']:+.4f} R/trade  {verdict}\n"
-        f"📊 Total         : {s['total_r']:+.2f} R\n"
-        f"📉 Max Drawdown  : {s['max_dd_r']:.2f} R\n\n"
-        f"🏆 Win Rate      : {s['win_rate']}%\n"
-        f"   Avg Win       : {s['avg_win_r']:+.2f} R\n"
-        f"   Avg Loss      : {s['avg_loss_r']:+.2f} R\n\n"
-        f"🎯 Reached TP1   : {s['tp1_reached']}\n"
-        f"🎯 Reached TP3   : {s['tp3_reached']}\n"
-        f"🛑 SL Hit        : {s['sl']}\n"
-        f"⚪ Breakeven     : {s['be']}\n"
-        f"⏳ Expired       : {s['expired']}"
-    )
-
-
 async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # /stats <asset> -> just that asset. /stats -> combined + per-asset table.
     arg = context.args[0].lower() if context.args else None
@@ -257,7 +207,16 @@ async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             return
         s = get_stats(asset=arg)
-        await update.message.reply_text(_stats_block(f"TRADE STATISTICS — {ASSETS[arg]['label']}", s))
+        await update.message.reply_text(
+            f"📊 TRADE STATISTICS — {ASSETS[arg]['label']}\n\n"
+            f"📈 Total Signals : {s['total']}\n"
+            f"🟢 BUY Signals   : {s['buy']}\n"
+            f"🔴 SELL Signals  : {s['sell']}\n"
+            f"🎯 TP Hit        : {s['tp']}\n"
+            f"⚪ Breakeven     : {s['be']}\n"
+            f"🛑 SL Hit        : {s['sl']}\n"
+            f"🏆 Win Rate      : {s['win_rate']}%"
+        )
         return
 
     s = get_stats()
@@ -267,15 +226,23 @@ async def _stats_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if a_stats["total"] == 0:
             continue
         breakdown_lines.append(
-            f"  {cfg['label']:<10} {a_stats['total']:>3} sig | "
-            f"{a_stats['expectancy']:+.3f}R/trade | {a_stats['win_rate']}% win"
+            f"  {cfg['label']:<10} {a_stats['total']:>3} signals | "
+            f"{a_stats['win_rate']}% win"
         )
     breakdown = "\n".join(breakdown_lines) if breakdown_lines else "  (no signals yet)"
 
     await update.message.reply_text(
-        _stats_block("TRADE STATISTICS (All Assets)", s)
-        + f"\n\nPer-Asset:\n{breakdown}\n\n"
-        f"Tip: /stats <asset> for one asset's detail (e.g. /stats eurusd)"
+        f"📊 TRADE STATISTICS (All Assets)\n\n"
+        f"📈 Total Signals : {s['total']}\n"
+        f"🟢 BUY Signals   : {s['buy']}\n"
+        f"🔴 SELL Signals  : {s['sell']}\n"
+        f"🎯 TP Hit        : {s['tp']}\n"
+        f"⚪ Breakeven     : {s['be']}\n"
+        f"🛑 SL Hit        : {s['sl']}\n"
+        f"🏆 Win Rate      : {s['win_rate']}%\n\n"
+        f"Per-Asset:\n{breakdown}\n\n"
+        f"Tip: /stats <asset> for one asset's detail "
+        f"(e.g. /stats eurusd)"
     )
 
 
@@ -316,7 +283,7 @@ def main() -> None:
     app.add_handler(CommandHandler("stats",   stats))
     app.add_handler(CommandHandler("history", history))
 
-    logger.info("🚀 Gold AI Scalper Pro V5.5 starting…")
+    logger.info("🚀 Mahendra Crypto AI Signal starting…")
     app.run_polling(drop_pending_updates=True)
 
 
