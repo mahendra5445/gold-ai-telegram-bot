@@ -23,7 +23,6 @@ from shared_state import trade_lock, heartbeat
 from strategy import get_signal
 from trade_tracker import (has_open_trade, save_trade, can_trade_today,
                            minutes_since_last_signal)
-from whatsapp import broadcast as wa_broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +56,7 @@ async def _check_asset(application, asset: str) -> None:
     decimals = cfg["decimals"]
     label = cfg["label"]
     spread = cfg.get("spread", 0.0)
+    min_sl_pct = cfg.get("min_sl_pct")
 
     # Feature #11 — SPREAD FILTER. Live spread normal se zyada chauda ho
     # (news, rollover, low liquidity) to trade hi mat lo. Gold pe Swissquote
@@ -75,7 +75,7 @@ async def _check_asset(application, asset: str) -> None:
     result = get_signal(
         candles["close"], candles["high"], candles["low"],
         candles["timeframes"], candles.get("volume"), candles.get("open"),
-        decimals=decimals, spread=spread,
+        decimals=decimals, spread=spread, min_sl_pct=min_sl_pct,
     )
 
     if result["signal"] == "NO TRADE":
@@ -87,7 +87,7 @@ async def _check_asset(application, asset: str) -> None:
         result.update(calculate_trade(
             result["signal"], live_price, result.get("atr_value", 0),
             decimals=decimals, session_active=result.get("session_active", True),
-            spread=spread,
+            spread=spread, min_sl_pct=min_sl_pct,
         ))
         candles["price"] = live_price
 
@@ -124,17 +124,6 @@ async def _check_asset(application, asset: str) -> None:
             logger.error(f"[SEND ERROR] chat_id={chat_id}: {e}")
 
     logger.info(f"[AUTO] {asset.upper()} signal sent to {sent}/{len(admins)} users")
-
-    # WhatsApp subscribers ko wahi message. requests.post blocking hai
-    # isliye to_thread — warna poora event loop har send pe ruk jaayega.
-    # Exception yahan swallow karte hain: WhatsApp fail ho to Telegram
-    # signal (jo pehle hi ja chuka hai) affect nahi hona chahiye.
-    try:
-        wa_sent = await asyncio.to_thread(wa_broadcast, message)
-        if wa_sent:
-            logger.info(f"[AUTO] {asset.upper()} → WhatsApp {wa_sent} sent")
-    except Exception as e:
-        logger.error(f"[WA] Broadcast failed: {e}")
 
 
 async def auto_signal_job(application) -> None:

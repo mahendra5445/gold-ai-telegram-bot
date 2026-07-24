@@ -9,7 +9,8 @@ from config import (
 
 
 def calculate_trade(signal, price, atr, decimals=2, session_active=True,
-                    spread=0.0, sl_mult=None, tp_multiples=None):
+                    spread=0.0, sl_mult=None, tp_multiples=None,
+                    min_sl_pct=None):
     """
     ATR-based SL aur R-multiple TPs.
 
@@ -45,7 +46,8 @@ def calculate_trade(signal, price, atr, decimals=2, session_active=True,
 
     # Minimum SL floor -- quiet market mein ATR itna chhota ho sakta hai ki
     # SL spread/noise ke andar hi aa jaaye aur turant hit ho.
-    min_risk = price * MIN_SL_PCT * session_factor
+    floor_pct = MIN_SL_PCT if min_sl_pct is None else min_sl_pct
+    min_risk = price * floor_pct * session_factor
     risk = max(risk, min_risk)
 
     # Spread ko risk mein jodo -- aap entry pe hi spread ke barabar peeche

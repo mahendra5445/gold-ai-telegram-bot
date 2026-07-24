@@ -1,11 +1,9 @@
 services:
-  # NOTE: type ab "worker" se "web" kar diya hai. Worker services ko koi
-  # public URL nahi milta, isliye Meta ka webhook kabhi verify nahi ho
-  # sakta tha. "web" service ko public domain + $PORT milta hai, jise
-  # whatsapp.py ka Flask server bind karta hai.
-  - type: web
+  # Telegram-only bot: koi HTTP server nahi hai, isliye "worker" type.
+  # (WhatsApp integration hata di gayi — us waqt "web" + /health
+  #  healthcheck chahiye tha, ab nahi.)
+  - type: worker
     name: gold-ai-telegram-bot
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    healthCheckPath: /health

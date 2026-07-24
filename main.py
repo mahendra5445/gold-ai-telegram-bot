@@ -28,7 +28,6 @@ from strategy import get_signal
 from trade_monitor import trade_monitor_job
 from trade_tracker import get_stats, history_text
 from watchdog import watchdog_job
-from whatsapp import start_whatsapp_server
 
 # ── logging must be configured before any module uses it ─────────────────
 setup_logging()
@@ -80,6 +79,7 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
     cfg = ASSETS[asset.lower()]
     decimals = cfg["decimals"]
     spread = cfg.get("spread", 0.0)
+    min_sl_pct = cfg.get("min_sl_pct")
     result = get_signal(
         candles["close"],
         candles["high"],
@@ -89,6 +89,7 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
         candles.get("open"),
         decimals=decimals,
         spread=spread,
+        min_sl_pct=min_sl_pct,
     )
 
     # BUG FIX (MT5 price mismatch): manual /gold aur /btc commands mein
@@ -112,7 +113,7 @@ async def _build_result(candles: dict, asset: str = "gold") -> dict:
                 calculate_trade(
                     result["signal"], live_price, result.get("atr_value", 0),
                     decimals=decimals, session_active=result.get("session_active", True),
-                    spread=spread,
+                    spread=spread, min_sl_pct=min_sl_pct,
                 )
             )
 
@@ -314,14 +315,6 @@ def main() -> None:
     app.add_handler(CommandHandler("trend",   trend))
     app.add_handler(CommandHandler("stats",   stats))
     app.add_handler(CommandHandler("history", history))
-
-    # WhatsApp Flask server ek daemon thread mein — run_polling() se PEHLE,
-    # kyunki run_polling() blocking hai aur uske baad ka code kabhi nahi
-    # chalta. Server crash ho to bot ko mat roko, sirf log karo.
-    try:
-        start_whatsapp_server()
-    except Exception as e:
-        logger.error(f"[WA] Server start failed (bot chalta rahega): {e}")
 
     logger.info("🚀 Gold AI Scalper Pro V5.5 starting…")
     app.run_polling(drop_pending_updates=True)

@@ -322,14 +322,14 @@ def simulate(trade: Trade, bars, start_i, spread, max_bars, targets=None,
 _DATA_CACHE: dict = {}
 
 
-def load_data(asset, days, csv_path=None, csv_tf=1, quiet=False):
+def load_data(asset, days, csv_path=None, csv_tf=1, quiet=False, tf_mult=1):
     """
     Data ek hi baar load karo, phir cache se do.
 
     NAYA: pehle har run() call apna data dobara fetch karti thi. Grid search
     mein wo 30+ baar Yahoo ko hit karta -- dheema, aur rate-limit ka khatra.
     """
-    key = (asset, days, csv_path, csv_tf)
+    key = (asset, days, csv_path, csv_tf, tf_mult)
     if key in _DATA_CACHE:
         return _DATA_CACHE[key]
 
@@ -340,9 +340,16 @@ def load_data(asset, days, csv_path=None, csv_tf=1, quiet=False):
             print(f"Loading {csv_path} (offline mode — no network needed)...")
         base = load_csv(csv_path)
         if csv_tf == 1:
-            m1, m5, m15 = base, resample(base, 5), resample(base, 15)
+            # tf_mult = signal timeframe scaler. 1 -> 1m/5m/15m (default,
+            # gold ke liye). 3 -> 3m/15m/45m. Poora triple saath scale hota
+            # hai taaki MTF ka rishta (1:5:15) waisa hi rahe.
+            m1 = base if tf_mult == 1 else resample(base, tf_mult)
+            m5 = resample(base, 5 * tf_mult)
+            m15 = resample(base, 15 * tf_mult)
         elif csv_tf == 5:
             m1, m5, m15 = base, base, resample(base, 3)
+            if tf_mult != 1:
+                sys.exit("--tf-mult sirf 1-minute CSV ke saath chalega")
         else:
             sys.exit("--csv-timeframe sirf 1 ya 5 ho sakta hai")
     else:
@@ -374,20 +381,22 @@ def load_data(asset, days, csv_path=None, csv_tf=1, quiet=False):
 
 def run(asset, days, spread, cooldown_bars, max_bars, overrides,
         targets=None, csv_path=None, csv_tf=1, slippage=0.0,
-        m5_slice=None, quiet=False):
+        m5_slice=None, quiet=False, tf_mult=1):
     cfg = ASSETS[asset]
     dec = cfg["decimals"]
+    min_sl_pct = cfg.get("min_sl_pct")
 
     for k, v in overrides.items():
         if v is not None:
             setattr(strategy, k, v)
 
-    m1, m5, m15 = load_data(asset, days, csv_path, csv_tf, quiet=quiet)
+    m1, m5, m15 = load_data(asset, days, csv_path, csv_tf, quiet=quiet,
+                            tf_mult=tf_mult)
     if m5_slice is not None:
         m5 = m5_slice
 
     return _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars,
-                   max_bars, targets, slippage)
+                   max_bars, targets, slippage, min_sl_pct)
 
 
 def _volume_usable(vols) -> bool:
@@ -428,7 +437,7 @@ CALC_WINDOW = 400
 
 
 def _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars, max_bars,
-            targets, slippage=0.0):
+            targets, slippage=0.0, min_sl_pct=None):
     trades = []
     last_signal_bar = -10 ** 9
     open_until = -1
@@ -464,7 +473,8 @@ def _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars, max_bars,
 
         res = strategy.get_signal(c5, h5, l5,
                                   {"1m": c1, "5m": c5, "15m": c15},
-                                  v5, o5, decimals=dec, spread=spread)
+                                  v5, o5, decimals=dec, spread=spread,
+                                  min_sl_pct=min_sl_pct)
         if res["signal"] == "NO TRADE":
             continue
 
@@ -473,7 +483,7 @@ def _engine(m1, m5, m15, cfg, dec, spread, cooldown_bars, max_bars,
         lv = risk.calculate_trade(res["signal"], entry, res["atr_value"],
                                   decimals=dec,
                                   session_active=res.get("session_active", True),
-                                  spread=spread)
+                                  spread=spread, min_sl_pct=min_sl_pct)
         rsk = abs(lv["entry"] - lv["sl"])
         if rsk <= 0:
             continue
@@ -703,7 +713,7 @@ def main():
     p.add_argument("--spread", type=float, default=None,
                    help="broker spread in price units (gold default 0.25)")
     p.add_argument("--cooldown-bars", type=int, default=3)
-    p.add_argument("--max-bars", type=int, default=TRADE_EXPIRY_MINUTES // 5,
+    p.add_argument("--max-bars", type=int, default=None,
                    help=f"trade expiry, 5m bars mein. Default config ke "
                         f"TRADE_EXPIRY_MINUTES ({TRADE_EXPIRY_MINUTES}m) se "
                         f"aata hai taaki backtest aur live ek jaisa chalein.")
@@ -727,6 +737,10 @@ def main():
     p.add_argument("--csv", default=None,
                    help="historical data CSV se backtest karo (internet ki "
                         "zaroorat nahi). MT4/MT5/TradingView export chalega.")
+    p.add_argument("--tf-mult", type=int, default=1,
+                   help="signal timeframe scaler. 1 = 1m/5m/15m (default). "
+                        "3 = 3m/15m/45m. Wide-spread assets (forex) pe R bada "
+                        "karke spread ka hissa ghatata hai.")
     p.add_argument("--csv-timeframe", type=int, default=1, choices=(1, 5),
                    help="CSV mein candles kis timeframe ki hain (1 ya 5 min)")
     p.add_argument("--sweep-tp", action="store_true",
@@ -737,6 +751,12 @@ def main():
     a = p.parse_args()
 
     spread = a.spread if a.spread is not None else ASSETS[a.asset].get("spread", 0.0)
+
+    # Expiry minutes mein fix hai -- bars mein badalte waqt bar ki lambai
+    # ka hisaab rakhna zaroori hai, warna tf-mult 3 pe trade 3 guna zyada
+    # der khula rehta aur comparison jhoota ho jaata.
+    if a.max_bars is None:
+        a.max_bars = max(1, TRADE_EXPIRY_MINUTES // (5 * a.tf_mult))
 
     if a.oos:
         oos_search(a, spread, train_frac=a.train_frac, grid=a.grid)
@@ -757,7 +777,9 @@ def main():
         for name, tg in structures:
             ts = run(a.asset, a.days, spread, a.cooldown_bars, a.max_bars,
                      {"MIN_SCORE": a.min_score,
-                      "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations}, targets=tg)
+                      "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations},
+                     targets=tg, csv_path=a.csv, csv_tf=a.csv_timeframe,
+                     slippage=a.slippage, tf_mult=a.tf_mult, quiet=True)
             if not ts:
                 print(f"  {name:<26}{0:>7}      —            —         —")
                 continue
@@ -777,7 +799,9 @@ def main():
             risk_mod.SL_ATR_MULT = mult
             ts = run(a.asset, a.days, spread, a.cooldown_bars, a.max_bars,
                      {"MIN_SCORE": a.min_score,
-                      "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations})
+                      "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations},
+                     csv_path=a.csv, csv_tf=a.csv_timeframe,
+                     slippage=a.slippage, tf_mult=a.tf_mult, quiet=True)
             if not ts:
                 print(f"  {mult:>8.1f} {0:>7}       —            —         —")
                 continue
@@ -794,7 +818,8 @@ def main():
     trades = run(a.asset, a.days, spread, a.cooldown_bars, a.max_bars,
                  {"MIN_SCORE": a.min_score,
                   "MIN_TOTAL_CONFIRMATIONS": a.min_confirmations},
-                 csv_path=a.csv, csv_tf=a.csv_timeframe, slippage=a.slippage)
+                 csv_path=a.csv, csv_tf=a.csv_timeframe, slippage=a.slippage,
+                 tf_mult=a.tf_mult)
 
     tag = (f"{ASSETS[a.asset]['label']} | {a.days}d | spread={spread} | "
            f"score>={a.min_score or strategy.MIN_SCORE} | "

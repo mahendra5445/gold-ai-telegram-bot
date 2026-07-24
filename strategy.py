@@ -104,7 +104,7 @@ def _empty_result(reason="Not enough candles"):
 
 
 def get_signal(close, high, low, timeframes, volume=None, open_=None,
-               decimals=2, spread=0.0):
+               decimals=2, spread=0.0, min_sl_pct=None):
 
     if close is None or len(close) < 200:
         return _empty_result()
@@ -459,6 +459,7 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
     trade_levels = calculate_trade(
         final_signal, price, atr_value, decimals=decimals,
         session_active=session_active, spread=spread,
+        min_sl_pct=min_sl_pct,
     )
 
     # MIN_RR gate — spread ke baad RR itna to hona hi chahiye
@@ -470,7 +471,8 @@ def get_signal(close, high, low, timeframes, volume=None, open_=None,
                            f"(spread ke baad)"]
                 final_signal = "NO TRADE"
                 trade_levels = calculate_trade("NO TRADE", price, atr_value,
-                                               decimals=decimals)
+                                               decimals=decimals,
+                                               min_sl_pct=min_sl_pct)
                 signal_tier, position_size_pct = "-", "-"
         except (ValueError, IndexError):
             pass

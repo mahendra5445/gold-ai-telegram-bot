@@ -36,5 +36,5 @@ Push/deploy karo — logs mein yeh dikhna chahiye:
 ```
 
 ## 5. Test
-Telegram pe bot ko /start bhejo, phir /gold, /btc, /oil, /eurusd,
-/usdjpy, /link, ya /atom.
+Telegram pe bot ko /start bhejo, phir /gold, /eurusd, /gbpusd
+ya /usdjpy.

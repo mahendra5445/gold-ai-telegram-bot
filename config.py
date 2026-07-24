@@ -17,7 +17,17 @@ ASSETS = {
         "binance":  None,
         "decimals": 2,
         "label":    "GOLD",
-        "spread":   0.25,
+        "spread":   0.35,
+        "min_sl_pct": 0.0015,
+    },
+    "silver": {
+        "symbol":   "XAGUSD=X",
+        "fallback": "SI=F",
+        "binance":  None,
+        "decimals": 3,
+        "label":    "SILVER",
+        "spread":   0.040,
+        "min_sl_pct": 0.0015,
     },
     "eurusd": {
         "symbol":   "EURUSD=X",
@@ -25,7 +35,8 @@ ASSETS = {
         "binance":  None,
         "decimals": 5,
         "label":    "EUR/USD",
-        "spread":   0.00008,
+        "spread":   0.00002,
+        "min_sl_pct": 0.00025,
     },
     "gbpusd": {
         "symbol":   "GBPUSD=X",
@@ -33,7 +44,8 @@ ASSETS = {
         "binance":  None,
         "decimals": 5,
         "label":    "GBP/USD",
-        "spread":   0.00012,
+        "spread":   0.00014,
+        "min_sl_pct": 0.00025,
     },
     "usdjpy": {
         "symbol":   "USDJPY=X",
@@ -41,11 +53,30 @@ ASSETS = {
         "binance":  None,
         "decimals": 3,
         "label":    "USD/JPY",
-        "spread":   0.010,
+        "spread":   0.012,
+        "min_sl_pct": 0.00020,
     },
 }
 
-ASSET_LIST = list(ASSETS.keys())
+# ─────────────────────────── ASSET_LIST ────────────────────────────
+# 100 din ke M1 backtest ka NAAP (aapke asli broker spread par,
+# 24-Jul-2026 ke MT5 screenshots se). Expectancy = R per trade:
+#
+#   gold    +0.160   287 trades   <- kaam karta hai
+#   eurusd  +0.025   302 trades   <- kaam karta hai (0.2 pip spread)
+#   silver  -0.001   320 trades   <- bilkul flat, koi edge nahi
+#   gbpusd  -0.074   297 trades   <- paisa khaata hai
+#   usdjpy  -0.077   263 trades   <- paisa khaata hai
+#
+# Neeche sirf wahi on hain jinka edge naapa gaya hai. Baaki chahiye to
+# comment hata do -- par numbers upar likhe hain.
+ASSET_LIST = [
+    "gold",
+    "eurusd",
+    # "silver",   # flat
+    # "gbpusd",   # negative
+    # "usdjpy",   # negative
+]
 
 GOLD_SYMBOL          = ASSETS["gold"]["symbol"]
 GOLD_SYMBOL_FUTURES  = ASSETS["gold"]["fallback"]
@@ -61,7 +92,23 @@ INTERVAL = "1min"
 # aur spread risk ka bada hissa kha jaata hai -- backtest ke bina mat badlein.
 SL_ATR_MULT = 2.5
 
-# Minimum SL, price ka fraction. Noise/spread se bachne ke liye floor.
+# Minimum SL, price ka fraction — sirf FALLBACK default hai.
+# Asli value har asset ke apne ASSETS["<asset>"]["min_sl_pct"] se aati hai.
+#
+# KYUN PER-ASSET (ye asli bug tha): ek hi 0.0015 sab pe lagta tha. Gold ka
+# ATR price ke muqable itna bada hai ki floor kabhi bind hi nahi karta —
+# uska SL sach mein volatility se banta hai. Forex pairs pe ulta tha:
+#
+#   asset    ATR x 2.5      floor 0.15%     kaun jeeta    TP1 distance
+#   GOLD       6.50            5.03           ATR           ~17.0  ✅
+#   EURUSD     0.00032         0.00163        FLOOR (5.0x)  ~43 pips ❌
+#   GBPUSD     0.00040         0.00192        FLOOR (4.8x)  ~51 pips ❌
+#   USDJPY     0.0650          0.2325         FLOOR (3.6x)  ~61 pips ❌
+#
+# Yaani forex pe SL apni volatility se 3.5-5 guna chauda tha, aur TP (2.5R)
+# lagbhag AADHE DIN ki range ban jaata tha. 5-minute scalp signal se aisa
+# target 8 ghante mein aata hi nahi — isliye gold target ki taraf jaata
+# dikhta tha aur ye teen bas expire/SL hote the.
 MIN_SL_PCT = 0.0015
 
 # Asian / off-hours mein SL aur floor dono itne guna chaude.
