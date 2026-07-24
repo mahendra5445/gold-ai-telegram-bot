@@ -1,4 +1,9 @@
-def _check(ok):
+def _check(ok, available=True):
+    """FIX: pehle sirf ✅/❌ tha. Ab jis check ka data hi nahi hai wo '➖'
+    dikhta hai -- warna user ko lagta tha VWAP fail ho raha hai, jabki
+    asal mein wo check chal hi nahi raha tha."""
+    if not available:
+        return "➖ (no data)"
     return "✅" if ok else "❌"
 
 
@@ -7,39 +12,41 @@ def format_signal(candles, result, decimals=2, label=None):
     reason_icon = "ℹ️" if is_no_trade else "✅"
     reasons = "\n".join(f"{reason_icon} {r}" for r in result.get("reasons", []))
 
-    signal_emoji = {
-        "BUY": "🟢",
-        "SELL": "🔴",
-        "NO TRADE": "🟡",
-    }.get(result.get("signal"), "⚪")
+    signal_emoji = {"BUY": "🟢", "SELL": "🔴", "NO TRADE": "🟡"}.get(
+        result.get("signal"), "⚪")
 
     price = round(float(candles["price"]), decimals)
-    asset_label = label or candles.get("asset", "BTC")
+    asset_label = label or candles.get("asset", "GOLD")
 
     session_line = result.get("session", "-")
     if not result.get("session_active", True):
         session_line += " ⚠️"
 
-    # Display-side safety net - always clamp to 100 even if a future edit
-    # upstream forgets to cap them.
-    ai_score_display = min(result['ai_score'], 100)
-    confidence_display = min(result['confidence'], 100)
-
-    # BUG FIX: NO TRADE case mein entry/sl/tp None hote hain aur Telegram
-    # message mein literally "Entry : None" dikh raha tha. "-" zyada saaf hai.
     def _lvl(key):
         v = result.get(key)
         return v if v is not None else "-"
 
-    return f"""🤖 MAHENDRA CRYPTO AI SIGNAL — {asset_label}
+    def _targets():
+        """Sirf wahi TP lines dikhao jo actually set hain -- single-target
+        mode mein 'TP2 : -' dikhana confusing tha."""
+        lines = []
+        for i in (1, 2, 3):
+            v = result.get(f"tp{i}")
+            if v is not None:
+                lines.append(f"✅ TP{i} : {v}")
+        return "\n".join(lines) if lines else "✅ TP : -"
+
+    ai_score = min(result["ai_score"], 100)
+
+    return f"""🤖 AI SCALPER PRO V5.5 — {asset_label}
 
 💰 Price : {price:.{decimals}f}
 
 ━━━━━━━━━━━━━━━━━━
 
-🟢 AI Score : {ai_score_display}/100
+🟢 AI Score : {ai_score}/100
 🏆 Grade : {result['grade']}
-⭐ Confidence : {confidence_display}%
+📐 Setup : {result.get('confidence', '-')}
 📈 Market : {result['market_status']}
 🕘 Session : {session_line}
 
@@ -54,25 +61,33 @@ def format_signal(candles, result, decimals=2, label=None):
 📊 EMA : {_check(result.get('ema_ok'))}
 📊 MACD : {result['macd']['trend']}
 📊 RSI : {result['rsi']}
-📊 ADX : {_check(result.get('adx_ok'))}
-📊 VWAP : {_check(result.get('vwap_ok'))}
+📊 ADX : {_check(result.get('adx_ok'))} ({result.get('adx_value', '-')})
+📊 VWAP : {_check(result.get('vwap_ok'), result.get('vwap_available', True))}
 📊 Supertrend : {_check(result.get('supertrend_ok'))}
-📊 Volume : {_check(result.get('volume_ok'))}
+📊 Volume : {_check(result.get('volume_ok'), result.get('volume_available', True))}
 📊 Pattern : {result.get('pattern', 'None')}
-📊 Liquidity Sweep : {result.get('liquidity_sweep', 'NO')}
+
+━━━━━━━━━━━━━━━━━━
+
+🧭 Regime : {result.get('regime', '-')}
+🏗 Structure : {result.get('structure', '-')}
+💥 BOS : {result.get('bos', 'No')}
+🔄 CHoCH : {result.get('choch', 'No')}
+🧱 Order Block : {result.get('order_block', 'None')}
+🕳 FVG : {result.get('fvg', 'No')}
+💧 Liquidity Sweep : {result.get('liquidity_sweep', 'NO')}
+⚖️ Premium/Discount : {result.get('premium_discount', '-')}
 
 ━━━━━━━━━━━━━━━━━━
 
 {signal_emoji} SIGNAL : {result['signal']}
-📐 Tier : {result.get('signal_tier', '-')} ({result.get('position_size', '-')} Position Size)
+📐 Tier : {result.get('signal_tier', '-')} ({result.get('position_size', '-')} of your normal risk)
 
 🎯 Entry : {_lvl('entry')}
 🛑 SL : {_lvl('sl')}
-✅ TP1 : {_lvl('tp1')}
-✅ TP2 : {_lvl('tp2')}
-✅ TP3 : {_lvl('tp3')}
+{_targets()}
 
-⚖️ RR : {result['risk_reward']}
+⚖️ RR (net of spread) : {result['risk_reward']}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -82,8 +97,9 @@ def format_signal(candles, result, decimals=2, label=None):
 
 ━━━━━━━━━━━━━━━━━━
 
-📊 Buy Confirmations : {result['buy_confirmations']}
-📉 Sell Confirmations : {result['sell_confirmations']}
+📊 Buy : {result.get('buy_directional', 0)} directional / {result['buy_confirmations']} total
+📉 Sell : {result.get('sell_directional', 0)} directional / {result['sell_confirmations']} total
 
-⏰ Valid : {result.get('valid_minutes', 8)} Minutes
+⏰ Entry valid : {result.get('valid_minutes', 15)} min
+⏳ Max hold : {round(result.get('max_hold_minutes', 480) / 60, 1)} hrs (phir auto-close)
 """

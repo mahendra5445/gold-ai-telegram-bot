@@ -152,6 +152,11 @@ def _fetch_tf_once(symbol: str, interval_key: str, label: str) -> dict:
         "volume":  volumes_f,
         "price":   closes_f[-1],
         "last_ts": last_ts,
+        # NAYA: har bar ka apna unix timestamp. Monitor ko chahiye taaki wo
+        # sirf UN bars ko dekhe jo pichhle check ke baad bane hain. Pehle
+        # sirf last_ts milta tha aur baaki bars ke time ka andaza lagana
+        # padta -- forex mein gaps hote hain, andaza galat hota hai.
+        "ts":      [r[5] for r in rows],
     }
 
 
@@ -206,19 +211,47 @@ def get_asset_tf(asset: str, interval: str) -> dict:
         return data
 
 
-# Backward-compatible wrapper (older code imports this name directly)
+# Backward-compatible wrappers (older code imports these names directly)
+def get_gold_tf(interval: str) -> dict:
+    return get_asset_tf("gold", interval)
+
+
 def get_btc_tf(interval: str) -> dict:
     return get_asset_tf("btc", interval)
 
 
 # ── external fallback price sources (jab Yahoo fail/glitch kare) ─────────
 #
-# All 12 assets are crypto, so every one gets the same two independent
-# fallback sources:
-#   1) Binance   — sabse liquid exchange, no API key needed.
-#   2) Coinbase  — backup; product id matches the same "XXX-USD" format
-#                  as the Yahoo symbol, so it works generically for any
-#                  coin in the registry without asset-specific branches.
+# Gold : 1) Swissquote — asli broker ka forex feed hai, isliye price MT5
+#           ke XAU/USD se sabse zyada match karta hai. Free, no API key.
+#        2) gold-api.com — simple free spot gold API, backup ka backup.
+# Crypto (BTC/LINK/ATOM): 1) Binance — sabse liquid exchange, no key needed.
+#        2) Coinbase — backup (sirf BTC ke liye supported).
+# Oil / Forex (EUR/USD, USD/JPY): koi free independent fallback nahi hai
+#        abhi — Yahoo retry hi final attempt hai in ke liye.
+
+def _swissquote_gold() -> float | None:
+    """Swissquote XAU/USD — bid/ask ka mid price (broker-grade feed)."""
+    url = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
+    r = requests.get(url, headers=YF_HEADERS, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    for platform in data:
+        profiles = platform.get("spreadProfilePrices") or []
+        for p in profiles:
+            bid, ask = p.get("bid"), p.get("ask")
+            if bid and ask:
+                return round((float(bid) + float(ask)) / 2, 2)
+    return None
+
+
+def _goldapi_gold() -> float | None:
+    """gold-api.com free spot gold price."""
+    r = requests.get("https://api.gold-api.com/price/XAU", timeout=10)
+    r.raise_for_status()
+    price = r.json().get("price")
+    return float(price) if price else None
+
 
 def _binance_price(binance_symbol: str) -> float | None:
     r = requests.get(
@@ -230,8 +263,8 @@ def _binance_price(binance_symbol: str) -> float | None:
     return float(price) if price else None
 
 
-def _coinbase_price(product_id: str) -> float | None:
-    r = requests.get(f"https://api.coinbase.com/v2/prices/{product_id}/spot", timeout=10)
+def _coinbase_btc() -> float | None:
+    r = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=10)
     r.raise_for_status()
     amount = r.json().get("data", {}).get("amount")
     return float(amount) if amount else None
@@ -241,13 +274,21 @@ def get_external_price(asset: str) -> float | None:
     """
     Yahoo ke alawa independent sources se live price.
     Sources order mein try hote hain; jo pehla kaam kare wahi return.
+    Asset ke type ke hisaab se alag sources use hote hain — agar koi
+    configured nahi hai (Oil, EUR/USD, USD/JPY abhi), None return hota hai
+    aur caller Yahoo futures/retry pe hi depend karta hai.
     """
     cfg = _asset_cfg(asset)
+    a   = asset.lower()
 
-    sources = []
-    if cfg.get("binance"):
-        sources.append(("Binance", lambda: _binance_price(cfg["binance"])))
-    sources.append(("Coinbase", lambda: _coinbase_price(cfg["symbol"])))
+    if a == "gold":
+        sources = [("Swissquote", _swissquote_gold), ("gold-api", _goldapi_gold)]
+    elif cfg.get("binance"):
+        sources = [("Binance", lambda: _binance_price(cfg["binance"]))]
+        if a == "btc":
+            sources.append(("Coinbase", _coinbase_btc))
+    else:
+        sources = []
 
     for name, fn in sources:
         try:
@@ -260,7 +301,7 @@ def get_external_price(asset: str) -> float | None:
     return None
 
 
-def get_latest_price(asset: str = "btc") -> float | None:
+def get_latest_price(asset: str = "gold") -> float | None:
     """
     Lightweight price check for the trade monitor / manual commands.
     Returns None on failure (caller skips and retries next cycle).
@@ -335,7 +376,7 @@ def get_latest_price(asset: str = "btc") -> float | None:
         return get_external_price(asset)
 
 
-def get_candles(asset: str = "btc") -> dict:
+def get_candles(asset: str = "gold") -> dict:
     """
     Fetch all three timeframes for any configured asset.
     Raises RuntimeError with a descriptive message on failure.
@@ -362,37 +403,66 @@ def get_candles(asset: str = "btc") -> dict:
     }
 
 
-def get_recent_range(asset: str = "btc", bars: int = 3) -> dict | None:
+def get_1m_bars(asset: str = "gold", lookback: int = 60) -> list[dict]:
     """
-    Last `bars` 1-minute candles ka HIGH / LOW / last CLOSE.
+    NAYA (monitor fix): aakhri `lookback` CLOSED 1-minute bars.
 
-    KYUN: trade_monitor pehle get_latest_price() use karta tha, jo aakhri 5
-    one-minute CLOSES ka MEDIAN deta hai. Wo do wajah se wins ko chupa
-    raha tha:
-      1. Median jaan-boojh kar spikes ko smooth kar deta hai -- aur TP
-         aksar spike par hi hit hota hai.
-      2. Monitor har 120s par ek hi number dekhta tha. Do poll ke beech
-         TP touch ho kar wapas aa jaye to wo poori tarah invisible tha.
-    SL ke saath ye problem nahi hoti: price SL ke paar jaake wahin rehta
-    hai, to agla poll use pakad hi leta hai. Isliye SL hamesha register
-    hota tha aur TP aksar nahi -- win rate artificially 5% tak gir gaya.
+    WAJAH: trade_monitor pehle har cycle mein ek single point price dekhta
+    tha. Agar do checks ke beech price TP ya SL ko touch karke wapas aa
+    gaya, bot ko pata hi nahi chalta tha -- trade open pada rehta tha aur
+    baad mein EXPIRED ho jaata tha. Isse stats systematically galat aate
+    the: jeetne wale trades gayab, expired ka dher.
 
-    High/low use karne se dono taraf ek jaisa insaaf hota hai.
+    Bars ke high/low se ye poora gap bhar jaata hai -- har minute ka
+    poora range dikhta hai, sirf ek snapshot nahi.
+
+    Return: [{"ts", "high", "low", "close"}, ...] purane se naye order mein.
+    Sabse nayi (abhi ban rahi) candle isme NAHI hai -- _fetch_tf_once use
+    drop kar deta hai, kyunki uska high/low abhi final nahi hai.
     """
+    tf = get_asset_tf(asset, "1min")
+    highs, lows, closes = tf["high"], tf["low"], tf["close"]
+    stamps = tf.get("ts") or []
+
+    n = min(lookback, len(closes), len(highs), len(lows))
+    if n <= 0:
+        return []
+
+    start = len(closes) - n
+    bars = []
+    for i in range(start, len(closes)):
+        bars.append({
+            "ts":    stamps[i] if i < len(stamps) else None,
+            "high":  highs[i],
+            "low":   lows[i],
+            "close": closes[i],
+        })
+    return bars
+
+
+# ── LIVE SPREAD (Feature #11) ────────────────────────────────────────────
+
+def get_live_spread(asset: str) -> float | None:
+    """
+    Asli live spread nikaalta hai (ask - bid).
+
+    Sirf gold pe kaam karta hai — Swissquote broker-grade feed bid aur ask
+    dono deta hai. Yahoo sirf last price deta hai, bid/ask nahi, isliye
+    baaki pairs pe None return hota hai aur caller config ka fixed spread
+    use karta hai.
+    """
+    if asset.lower() != "gold":
+        return None
     try:
-        tf = get_asset_tf(asset, "1min")
-    except Exception:
-        return None
-
-    highs = [h for h in (tf.get("high") or []) if h is not None][-bars:]
-    lows  = [l for l in (tf.get("low")  or []) if l is not None][-bars:]
-    closes = [c for c in (tf.get("close") or []) if c is not None]
-
-    if not highs or not lows or not closes:
-        return None
-
-    return {
-        "high":  float(max(highs)),
-        "low":   float(min(lows)),
-        "close": float(closes[-1]),
-    }
+        url = ("https://forex-data-feed.swissquote.com/public-quotes/"
+               "bboquotes/instrument/XAU/USD")
+        r = requests.get(url, headers=YF_HEADERS, timeout=10)
+        r.raise_for_status()
+        for platform in r.json():
+            for p in (platform.get("spreadProfilePrices") or []):
+                bid, ask = p.get("bid"), p.get("ask")
+                if bid and ask:
+                    return round(float(ask) - float(bid), 4)
+    except Exception as e:
+        logger.warning(f"[SPREAD] live spread fetch failed for {asset}: {e}")
+    return None

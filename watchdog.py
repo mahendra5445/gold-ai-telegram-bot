@@ -25,7 +25,6 @@ import asyncio
 import logging
 import time
 
-from notify import notify_channel
 from shared_state import heartbeat
 
 logger = logging.getLogger(__name__)
@@ -41,7 +40,12 @@ _alerted = False   # tracks whether we've already sent the "stuck" alert
 
 
 async def _notify_all(application, text: str) -> None:
-    await notify_channel(application, text)
+    admins = application.bot_data.get("admins", [])
+    for chat_id in admins:
+        try:
+            await application.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            logger.error(f"[WATCHDOG SEND ERROR] chat_id={chat_id}: {e}")
 
 
 async def watchdog_job(application) -> None:

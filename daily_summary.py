@@ -18,7 +18,6 @@ import logging
 from datetime import datetime, timedelta
 
 from config import ASSETS
-from notify import notify_channel
 from trade_tracker import get_stats
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,12 @@ SUMMARY_MINUTE = 0
 
 
 async def _notify_all(application, text: str) -> None:
-    await notify_channel(application, text)
+    admins = application.bot_data.get("admins", [])
+    for chat_id in admins:
+        try:
+            await application.bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            logger.error(f"[DAILY SUMMARY SEND ERROR] chat_id={chat_id}: {e}")
 
 
 def _seconds_until_next_run() -> float:
@@ -49,11 +53,22 @@ def _build_summary_text() -> str:
         lines.append("No signals today.")
         return "\n".join(lines)
 
+    # FIX: pehle yahan "TP Hit : {overall['tp']}" likha tha. Lekin `tp` ab ek
+    # LEGACY key hai jiska matlab "koi bhi closed trade jiska R > 0" hai --
+    # usmein trailing stop se nikle trades bhi ginne jaate hain, jo target
+    # tak pahunche hi nahi. Backtest mein 288 mein se 105 trades TRAIL se
+    # band hue the, to ye farq chhota nahi hai. Ab label sach bolta hai aur
+    # expectancy bhi dikhti hai -- win rate akela kuch nahi batata.
     lines.append(
-        f"📈 Total Signals : {overall['total']}\n"
-        f"🎯 TP Hit        : {overall['tp']}\n"
+        f"📈 Total Signals : {overall['total']}  (open: {overall['open']})\n"
+        f"✅ Closed        : {overall['closed']}\n"
+        f"💰 Expectancy    : {overall['expectancy']:+.3f} R/trade\n"
+        f"📊 Total         : {overall['total_r']:+.2f} R\n"
+        f"🟢 Profitable    : {overall['tp']}   (TP ya trailing se)\n"
+        f"🎯 Reached TP1   : {overall['tp1_reached']}\n"
         f"⚪ Breakeven     : {overall['be']}\n"
         f"🛑 SL Hit        : {overall['sl']}\n"
+        f"⏳ Expired       : {overall['expired']}\n"
         f"🏆 Win Rate      : {overall['win_rate']}%\n"
     )
 
@@ -65,9 +80,9 @@ def _build_summary_text() -> str:
             continue
         any_asset_line = True
         lines.append(
-            f"  {cfg['label']:<10} {s['total']:>2} signals | "
-            f"TP {s['tp']} / SL {s['sl']} / BE {s['be']} | "
-            f"{s['win_rate']}% win"
+            f"  {cfg['label']:<10} {s['total']:>2} sig | "
+            f"{s['expectancy']:+.3f} R/trade | "
+            f"win {s['sl']}L/{s['tp']}W | {s['win_rate']}%"
         )
     if not any_asset_line:
         lines.append("  (none)")
